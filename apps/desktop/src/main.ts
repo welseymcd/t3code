@@ -1756,6 +1756,7 @@ function registerIpcHandlers(): void {
     }
 
     applyAutoUpdaterChannel(nextChannel);
+    autoUpdater.allowDowngrade = true;
     await checkForUpdates("channel-change");
     return updateState;
   });
