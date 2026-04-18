@@ -1,14 +1,9 @@
 services:
   t3code:
+    image: ghcr.io/welseymcd/t3code:latest
     restart: always
-    build:
-      context: .
-      target: runner
-    environment:
-      CODEX_HOME: /codex-home
     ports:
       - "3773:3773"
     volumes:
-      - /Users/wesley/Development:/data
-      - /Users/wesley/.codex:/codex-home
+      - /t3code:/data
       - /var/run/docker.sock:/var/run/docker.sock
