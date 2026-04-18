@@ -5,15 +5,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 const { openInPreferredEditorMock, readLocalApiMock } = vi.hoisted(() => ({
-  openInPreferredEditorMock: vi.fn(async () => "vscode"),
+  openInPreferredEditorMock: vi.fn(async () => undefined),
   readLocalApiMock: vi.fn(() => ({
     server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
     shell: { openInEditor: vi.fn(async () => undefined) },
   })),
 }));
 
-vi.mock("../editorPreferences", () => ({
-  openInPreferredEditor: openInPreferredEditorMock,
+vi.mock("../hooks/useOpenWorkspaceFile", () => ({
+  useOpenWorkspaceFile: () => openInPreferredEditorMock,
 }));
 
 vi.mock("../localApi", () => ({
@@ -48,7 +48,11 @@ describe("ChatMarkdown", () => {
       await link.click();
 
       await vi.waitFor(() => {
-        expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), filePath);
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith({
+          environmentId: undefined,
+          workspaceRoot: "/repo/project",
+          targetPath: filePath,
+        });
       });
     } finally {
       await screen.unmount();
@@ -70,7 +74,11 @@ describe("ChatMarkdown", () => {
       await link.click();
 
       await vi.waitFor(() => {
-        expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), `${filePath}:1`);
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith({
+          environmentId: undefined,
+          workspaceRoot: "/repo/project",
+          targetPath: `${filePath}:1`,
+        });
       });
     } finally {
       await screen.unmount();
@@ -92,10 +100,11 @@ describe("ChatMarkdown", () => {
       await link.click();
 
       await vi.waitFor(() => {
-        expect(openInPreferredEditorMock).toHaveBeenCalledWith(
-          expect.anything(),
-          `${filePath}:1:7`,
-        );
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith({
+          environmentId: undefined,
+          workspaceRoot: "/repo/project",
+          targetPath: `${filePath}:1:7`,
+        });
       });
     } finally {
       await screen.unmount();

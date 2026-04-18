@@ -4,6 +4,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
+import { FileViewerDialog } from "../components/FileViewerDialog";
 import {
   DiffPanelHeaderSkeleton,
   DiffPanelLoadingState,
@@ -253,6 +254,7 @@ function ChatThreadRouteView() {
           onOpenDiff={openDiff}
           renderDiffContent={shouldRenderDiffContent}
         />
+        <FileViewerDialog />
       </>
     );
   }
@@ -270,6 +272,7 @@ function ChatThreadRouteView() {
       <RightPanelSheet open={diffOpen} onClose={closeDiff}>
         {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
       </RightPanelSheet>
+      <FileViewerDialog />
     </>
   );
 }

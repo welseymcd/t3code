@@ -60,7 +60,7 @@ describe("readPathFromLoginShell", () => {
     const [shell, args, options] = firstCall;
     expect(shell).toBe("/opt/homebrew/bin/fish");
     expect(args).toHaveLength(2);
-    expect(args?.[0]).toBe("-ilc");
+    expect(args?.[0]).toBe("-lc");
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
@@ -177,6 +177,13 @@ describe("listLoginShellCandidates", () => {
 
   it("falls back to the platform default when no shells are available", () => {
     expect(listLoginShellCandidates("linux", undefined, "")).toEqual(["/bin/bash"]);
+  });
+
+  it("drops placeholder shell values before probing", () => {
+    expect(listLoginShellCandidates("linux", "unknown", " /bin/zsh ")).toEqual([
+      "/bin/zsh",
+      "/bin/bash",
+    ]);
   });
 });
 

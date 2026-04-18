@@ -101,6 +101,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const FILE_VIEWER_LABELS = {
+  internal: "Internal Monaco",
+  external: "External editor",
+} as const;
+
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
@@ -460,6 +465,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.fileViewer !== DEFAULT_UNIFIED_SETTINGS.fileViewer ? ["File viewer"] : []),
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
@@ -490,6 +496,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.fileViewer,
       settings.timestampFormat,
       theme,
     ],
@@ -879,6 +886,45 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="File viewer"
+          description="Choose whether workspace files open inside T3 Code or in your preferred editor."
+          resetAction={
+            settings.fileViewer !== DEFAULT_UNIFIED_SETTINGS.fileViewer ? (
+              <SettingResetButton
+                label="file viewer"
+                onClick={() =>
+                  updateSettings({
+                    fileViewer: DEFAULT_UNIFIED_SETTINGS.fileViewer,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.fileViewer}
+              onValueChange={(value) => {
+                if (value === "internal" || value === "external") {
+                  updateSettings({ fileViewer: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Default file viewer">
+                <SelectValue>{FILE_VIEWER_LABELS[settings.fileViewer]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="internal">
+                  {FILE_VIEWER_LABELS.internal}
+                </SelectItem>
+                <SelectItem hideIndicator value="external">
+                  {FILE_VIEWER_LABELS.external}
                 </SelectItem>
               </SelectPopup>
             </Select>

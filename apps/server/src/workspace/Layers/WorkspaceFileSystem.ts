@@ -1,6 +1,6 @@
 import fsPromises from "node:fs/promises";
 
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { PROJECT_READ_FILE_MAX_BYTES_LIMIT } from "@t3tools/contracts";
 
 import {
@@ -69,9 +69,20 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
       let isBinary = hasNullByte;
 
       if (!isBinary) {
-        try {
-          content = utf8Decoder.decode(visibleBytes);
-        } catch {
+        const decoded = yield* Effect.try({
+          try: () => utf8Decoder.decode(visibleBytes),
+          catch: () =>
+            new WorkspaceFileSystemError({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              operation: "workspaceFileSystem.decodeFile",
+              detail: "File content is not valid UTF-8.",
+            }),
+        }).pipe(Effect.option);
+
+        if (Option.isSome(decoded)) {
+          content = decoded.value;
+        } else {
           isBinary = true;
         }
       }

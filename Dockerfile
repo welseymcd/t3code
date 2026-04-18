@@ -28,7 +28,9 @@ COPY . .
 
 RUN bun run build -- --filter=t3 --filter=@t3tools/web
 
-FROM node:24-bookworm-slim AS runner
+FROM oven/bun:1.3.11 AS runner
+
+ARG CODEX_CLI_VERSION=0.120.0
 
 ENV NODE_ENV=production \
   T3CODE_MODE=web \
@@ -40,21 +42,22 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client \
+  && apt-get install -y --no-install-recommends bash ca-certificates docker-cli git gosu openssh-client \
+  && ln -sf "$(command -v bun)" /usr/local/bin/node \
+  && bun install -g "@openai/codex@${CODEX_CLI_VERSION}" \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps/server/package.json ./apps/server/package.json
-COPY --from=build /app/apps/server/dist ./apps/server/dist
+COPY --from=build /app ./
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /data \
-  && chown -R node:node /app /data
-
-USER node
+  && chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && chown -R bun:bun /app /data
 
 EXPOSE 3773
 VOLUME ["/data"]
 
 # Provider CLIs such as `codex` or `claude` are intentionally not bundled here.
 # Extend this image if you want those binaries available inside the container.
-CMD ["node", "apps/server/dist/bin.mjs", "serve", "--host", "0.0.0.0", "--port", "3773", "--no-browser"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["bun", "apps/server/dist/bin.mjs", "serve", "--host", "0.0.0.0", "--port", "3773", "--no-browser"]

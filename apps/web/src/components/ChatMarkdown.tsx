@@ -1,5 +1,6 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
+import { type EnvironmentId } from "@t3tools/contracts";
 import React, {
   Children,
   Suspense,
@@ -18,10 +19,10 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useOpenWorkspaceFile } from "../hooks/useOpenWorkspaceFile";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
-import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -54,6 +55,7 @@ class CodeHighlightErrorBoundary extends React.Component<
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
+  environmentId?: EnvironmentId | undefined;
   isStreaming?: boolean;
 }
 
@@ -246,6 +248,8 @@ interface MarkdownFileLinkProps {
   targetPath: string;
   displayPath: string;
   filePath: string;
+  environmentId?: EnvironmentId | undefined;
+  workspaceRoot?: string | undefined;
   label: string;
   theme: "light" | "dark";
   className?: string | undefined;
@@ -336,28 +340,27 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   targetPath,
   displayPath,
   filePath,
+  environmentId,
+  workspaceRoot,
   label,
   theme,
   className,
 }: MarkdownFileLinkProps) {
-  const handleOpen = useCallback(() => {
-    const api = readLocalApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Open in editor is unavailable",
-      });
-      return;
-    }
+  const openWorkspaceFile = useOpenWorkspaceFile();
 
-    void openInPreferredEditor(api, targetPath).catch((error) => {
+  const handleOpen = useCallback(() => {
+    void openWorkspaceFile({
+      environmentId,
+      workspaceRoot,
+      targetPath,
+    }).catch((error) => {
       toastManager.add({
         type: "error",
         title: "Unable to open file",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
-  }, [targetPath]);
+  }, [environmentId, openWorkspaceFile, targetPath, workspaceRoot]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -397,7 +400,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "open", label: "Open in editor" },
+          { id: "open", label: "Open file" },
           { id: "copy-relative", label: "Copy relative path" },
           { id: "copy-full", label: "Copy full path" },
         ] as const,
@@ -464,13 +467,15 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.displayPath === next.displayPath &&
     previous.filePath === next.filePath &&
+    previous.environmentId === next.environmentId &&
+    previous.workspaceRoot === next.workspaceRoot &&
     previous.label === next.label &&
     previous.theme === next.theme &&
     previous.className === next.className
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, environmentId, isStreaming = false }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
@@ -521,6 +526,8 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
             targetPath={fileLinkMeta.targetPath}
             displayPath={fileLinkMeta.displayPath}
             filePath={fileLinkMeta.filePath}
+            environmentId={environmentId}
+            workspaceRoot={cwd}
             label={labelParts.join(" · ")}
             theme={resolvedTheme}
             className={props.className}
@@ -551,10 +558,12 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
     }),
     [
       diffThemeName,
+      environmentId,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
       resolvedTheme,
+      cwd,
     ],
   );
 

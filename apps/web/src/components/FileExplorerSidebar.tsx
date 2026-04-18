@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOpenWorkspaceFile } from "../hooks/useOpenWorkspaceFile";
 import { openInPreferredEditor } from "../editorPreferences";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { projectListDirectoryQueryOptions } from "../lib/projectReactQuery";
@@ -210,6 +211,7 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
 }) {
+  const openWorkspaceFile = useOpenWorkspaceFile();
   const [pinned, setPinned] = useLocalStorage(
     FILE_EXPLORER_PINNED_STORAGE_KEY,
     false,
@@ -278,13 +280,13 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
       if (!props.workspaceRoot) {
         return;
       }
-      const api = readLocalApi();
-      if (!api) {
-        return;
-      }
-      void openInPreferredEditor(api, joinWorkspacePath(props.workspaceRoot, relativePath));
+      void openWorkspaceFile({
+        environmentId: props.environmentId,
+        workspaceRoot: props.workspaceRoot,
+        targetPath: joinWorkspacePath(props.workspaceRoot, relativePath),
+      });
     },
-    [props.workspaceRoot],
+    [openWorkspaceFile, props.environmentId, props.workspaceRoot],
   );
   const handleOpenWorkspace = useCallback(() => {
     if (!props.workspaceRoot) {

@@ -30,9 +30,24 @@ function trimNonEmpty(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+function normalizeShellCandidate(value: string | null | undefined): string | undefined {
+  const trimmed = trimNonEmpty(value);
+  if (!trimmed) {
+    return undefined;
+  }
+
+  // Some callers persist sentinel values instead of an actual shell path.
+  // Treat those as missing so PATH hydration can fall back quietly.
+  if (trimmed.toLowerCase() === "unknown") {
+    return undefined;
+  }
+
+  return trimmed;
+}
+
 function readUserLoginShell(): string | undefined {
   try {
-    return trimNonEmpty(OS.userInfo().shell);
+    return normalizeShellCandidate(OS.userInfo().shell);
   } catch {
     return undefined;
   }
@@ -48,7 +63,11 @@ export function listLoginShellCandidates(
   const seen = new Set<string>();
   const candidates: string[] = [];
 
-  for (const candidate of [trimNonEmpty(shell), trimNonEmpty(userShell), fallbackShell]) {
+  for (const candidate of [
+    normalizeShellCandidate(shell),
+    normalizeShellCandidate(userShell),
+    fallbackShell,
+  ]) {
     if (!candidate || seen.has(candidate)) {
       continue;
     }
@@ -192,7 +211,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+  const output = execFile(shell, ["-lc", buildEnvironmentCaptureCommand(names)], {
     encoding: "utf8",
     timeout: 5000,
   });
