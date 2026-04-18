@@ -294,6 +294,9 @@ const make = Effect.gen(function* () {
       thread,
       projects: readModel.projects,
     });
+    const projectWorkspaceRoot = readModel.projects.find(
+      (project) => project.id === thread.projectId,
+    )?.workspaceRoot;
 
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
@@ -308,6 +311,8 @@ const make = Effect.gen(function* () {
         threadId,
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(projectWorkspaceRoot ? { projectRoot: projectWorkspaceRoot } : {}),
+        ...(thread.worktreePath ? { worktreePath: thread.worktreePath } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,

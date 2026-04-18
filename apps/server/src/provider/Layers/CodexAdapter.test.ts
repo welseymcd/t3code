@@ -210,6 +210,31 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+  it.effect("forwards project root and worktree metadata into the Codex session", () =>
+    Effect.gen(function* () {
+      validationManager.startSessionImpl.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        cwd: "/tmp/project/.t3/worktrees/thread-1",
+        projectRoot: "/tmp/project",
+        worktreePath: "/tmp/project/.t3/worktrees/thread-1",
+        runtimeMode: "full-access",
+      });
+
+      assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        binaryPath: "codex",
+        cwd: "/tmp/project/.t3/worktrees/thread-1",
+        projectRoot: "/tmp/project",
+        worktreePath: "/tmp/project/.t3/worktrees/thread-1",
+        runtimeMode: "full-access",
+      });
+    }),
+  );
 });
 
 const sessionErrorManager = new FakeCodexManager();

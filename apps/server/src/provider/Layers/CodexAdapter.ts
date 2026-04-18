@@ -1402,6 +1402,8 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         threadId: input.threadId,
         provider: "codex",
         ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+        ...(input.projectRoot !== undefined ? { projectRoot: input.projectRoot } : {}),
+        ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
         ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: input.runtimeMode,
         binaryPath,

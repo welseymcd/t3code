@@ -119,6 +119,8 @@ export interface CodexAppServerStartSessionInput {
   readonly threadId: ThreadId;
   readonly provider?: "codex";
   readonly cwd?: string;
+  readonly projectRoot?: string;
+  readonly worktreePath?: string;
   readonly model?: string;
   readonly serviceTier?: string;
   readonly resumeCursor?: unknown;
@@ -287,7 +289,26 @@ Your active mode changes only when new developer instructions with a different \
 The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+
+## Worktree deletion safety
+
+When \`T3CODE_WORKTREE_PATH\` is set, the active chat is attached to that linked git worktree and \`T3CODE_PROJECT_ROOT\` points at the main project checkout.
+
+If the user asks to delete the current worktree or its current branch, do not detach HEAD and delete the branch ref from inside the active worktree. Prefer removing the linked worktree itself from \`T3CODE_PROJECT_ROOT\`, for example with \`git -C "$T3CODE_PROJECT_ROOT" worktree remove --force "$T3CODE_WORKTREE_PATH"\`, then delete the branch ref afterward only if it still exists and the user asked for that too.
 </collaboration_mode>`;
+
+export function buildCodexAppServerEnv(input: {
+  readonly homePath?: string;
+  readonly projectRoot?: string;
+  readonly worktreePath?: string;
+}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
+    ...(input.projectRoot ? { T3CODE_PROJECT_ROOT: input.projectRoot } : {}),
+    ...(input.worktreePath ? { T3CODE_WORKTREE_PATH: input.worktreePath } : {}),
+  };
+}
 
 function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: "untrusted" | "on-request" | "never";
@@ -491,10 +512,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       });
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
-        },
+        env: buildCodexAppServerEnv({
+          ...(codexHomePath ? { homePath: codexHomePath } : {}),
+          ...(input.projectRoot ? { projectRoot: input.projectRoot } : {}),
+          ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
+        }),
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
       });

@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type GitStatusResult,
   ProjectId,
   type ModelSelection,
   type ProviderKind,
@@ -161,6 +162,14 @@ export function resolveSendEnvMode(input: {
   isGitRepo: boolean;
 }): DraftThreadEnvMode {
   return input.isGitRepo ? input.requestedEnvMode : "local";
+}
+
+export function shouldAutoRecoverDeletedWorktree(input: {
+  threadWorktreePath: string | null;
+  projectCwd: string | null;
+  gitStatus: Pick<GitStatusResult, "isRepo"> | null;
+}): boolean {
+  return Boolean(input.threadWorktreePath && input.projectCwd && input.gitStatus?.isRepo === false);
 }
 
 export function cloneComposerImageForRetry(

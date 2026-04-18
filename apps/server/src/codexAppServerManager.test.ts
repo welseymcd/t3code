@@ -7,6 +7,7 @@ import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import {
   buildCodexInitializeParams,
+  buildCodexAppServerEnv,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
@@ -256,6 +257,31 @@ describe("normalizeCodexModelSlug", () => {
   it("keeps non-aliased models as-is", () => {
     expect(normalizeCodexModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
     expect(normalizeCodexModelSlug("gpt-5.2")).toBe("gpt-5.2");
+  });
+});
+
+describe("buildCodexAppServerEnv", () => {
+  it("includes project and worktree metadata when provided", () => {
+    const env = buildCodexAppServerEnv({
+      homePath: "/tmp/codex-home",
+      projectRoot: "/tmp/project",
+      worktreePath: "/tmp/project/.t3/worktrees/thread-1",
+    });
+
+    expect(env.CODEX_HOME).toBe("/tmp/codex-home");
+    expect(env.T3CODE_PROJECT_ROOT).toBe("/tmp/project");
+    expect(env.T3CODE_WORKTREE_PATH).toBe("/tmp/project/.t3/worktrees/thread-1");
+  });
+});
+
+describe("CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS", () => {
+  it("includes guidance for deleting the active worktree safely", () => {
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain("T3CODE_PROJECT_ROOT");
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain("T3CODE_WORKTREE_PATH");
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain("worktree remove --force");
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain(
+      "do not detach HEAD and delete the branch ref from inside the active worktree",
+    );
   });
 });
 

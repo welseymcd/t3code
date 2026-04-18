@@ -144,6 +144,7 @@ import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./Branch
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { FileExplorerSidebar } from "./FileExplorerSidebar";
+import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -163,6 +164,7 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldAutoRecoverDeletedWorktree,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -644,6 +646,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
   );
@@ -689,6 +692,7 @@ export default function ChatView(props: ChatViewProps) {
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
+  const recoveredDeletedWorktreePathRef = useRef<string | null>(null);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
@@ -1419,6 +1423,8 @@ export default function ChatView(props: ChatViewProps) {
     return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
   }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
   const activeProjectCwd = activeProject?.cwd ?? null;
+  const persistedThreadWorktreePath =
+    activeThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const isEmptyUnstartedServerThread = Boolean(
     isServerThread &&
     activeThread &&
@@ -1442,6 +1448,11 @@ export default function ChatView(props: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
+  const shouldRecoverDeletedWorktree = shouldAutoRecoverDeletedWorktree({
+    threadWorktreePath: persistedThreadWorktreePath,
+    projectCwd: activeProjectCwd,
+    gitStatus: gitStatusQuery.data,
+  });
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalLaunchContext?.threadId === activeThreadId
@@ -1483,6 +1494,75 @@ export default function ChatView(props: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "terminal.close", terminalShortcutLabelOptions),
     [keybindings, terminalShortcutLabelOptions],
   );
+  useEffect(() => {
+    if (persistedThreadWorktreePath !== recoveredDeletedWorktreePathRef.current) {
+      recoveredDeletedWorktreePathRef.current = null;
+    }
+  }, [persistedThreadWorktreePath]);
+
+  useEffect(() => {
+    if (!shouldRecoverDeletedWorktree || !persistedThreadWorktreePath) {
+      return;
+    }
+
+    if (recoveredDeletedWorktreePathRef.current === persistedThreadWorktreePath) {
+      return;
+    }
+    recoveredDeletedWorktreePathRef.current = persistedThreadWorktreePath;
+
+    const displayWorktreePath = formatWorktreePathForDisplay(persistedThreadWorktreePath);
+
+    if (activeThread) {
+      const activeThreadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+      setStoreThreadBranch(activeThreadRef, activeThread.branch, null);
+
+      const api = readEnvironmentApi(activeThread.environmentId);
+      if (api) {
+        void (async () => {
+          if (activeThread.session) {
+            await api.orchestration
+              .dispatchCommand({
+                type: "thread.session.stop",
+                commandId: newCommandId(),
+                threadId: activeThread.id,
+                createdAt: new Date().toISOString(),
+              })
+              .catch(() => undefined);
+          }
+
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.meta.update",
+              commandId: newCommandId(),
+              threadId: activeThread.id,
+              branch: activeThread.branch,
+              worktreePath: null,
+            })
+            .catch(() => undefined);
+        })();
+      }
+    } else if (draftThread) {
+      setDraftThreadContext(composerDraftTarget, {
+        branch: draftThread.branch,
+        worktreePath: null,
+        envMode: "local",
+      });
+    }
+
+    toastManager.add({
+      type: "warning",
+      title: "Worktree removed",
+      description: `${displayWorktreePath} no longer exists. Switched this thread back to the project checkout.`,
+    });
+  }, [
+    activeThread,
+    composerDraftTarget,
+    draftThread,
+    persistedThreadWorktreePath,
+    setDraftThreadContext,
+    setStoreThreadBranch,
+    shouldRecoverDeletedWorktree,
+  ]);
   const diffPanelShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
     [keybindings, nonTerminalShortcutLabelOptions],

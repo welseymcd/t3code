@@ -12,6 +12,8 @@ describe("ProviderSessionStartInput", () => {
       threadId: "thread-1",
       provider: "codex",
       cwd: "/tmp/workspace",
+      projectRoot: "/tmp/project",
+      worktreePath: "/tmp/project/.t3/worktrees/thread-1",
       modelSelection: {
         provider: "codex",
         model: "gpt-5.3-codex",
@@ -25,6 +27,8 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.runtimeMode).toBe("full-access");
     expect(parsed.modelSelection?.provider).toBe("codex");
     expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
+    expect(parsed.projectRoot).toBe("/tmp/project");
+    expect(parsed.worktreePath).toBe("/tmp/project/.t3/worktrees/thread-1");
     if (parsed.modelSelection?.provider !== "codex") {
       throw new Error("Expected codex modelSelection");
     }

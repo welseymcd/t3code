@@ -12,6 +12,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
+  shouldAutoRecoverDeletedWorktree,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -91,6 +92,38 @@ describe("resolveSendEnvMode", () => {
   it("forces local mode for non-git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
     expect(resolveSendEnvMode({ requestedEnvMode: "local", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("shouldAutoRecoverDeletedWorktree", () => {
+  it("returns true when a thread worktree no longer resolves to a git repository", () => {
+    expect(
+      shouldAutoRecoverDeletedWorktree({
+        threadWorktreePath: "/tmp/project/.t3/worktrees/feature-a",
+        projectCwd: "/tmp/project",
+        gitStatus: { isRepo: false },
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when the thread is already using the project checkout", () => {
+    expect(
+      shouldAutoRecoverDeletedWorktree({
+        threadWorktreePath: null,
+        projectCwd: "/tmp/project",
+        gitStatus: { isRepo: false },
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when git status still reports a repository", () => {
+    expect(
+      shouldAutoRecoverDeletedWorktree({
+        threadWorktreePath: "/tmp/project/.t3/worktrees/feature-a",
+        projectCwd: "/tmp/project",
+        gitStatus: { isRepo: true },
+      }),
+    ).toBe(false);
   });
 });
 
