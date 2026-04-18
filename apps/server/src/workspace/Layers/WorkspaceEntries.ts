@@ -26,6 +26,7 @@ const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
+const WORKSPACE_LIST_DIRECTORY_DEFAULT_LIMIT = 400;
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
   ".convex",
@@ -497,9 +498,60 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const listDirectory: WorkspaceEntriesShape["listDirectory"] = Effect.fn(
+    "WorkspaceEntries.listDirectory",
+  )(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    const normalizedParentPath = input.parentPath
+      ? (yield* workspacePaths
+          .resolveRelativePathWithinRoot({
+            workspaceRoot: normalizedCwd,
+            relativePath: input.parentPath,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorkspaceEntriesError({
+                  cwd: input.cwd,
+                  operation: "workspaceEntries.listDirectory",
+                  detail: cause.message,
+                  cause,
+                }),
+            ),
+          )).relativePath
+      : undefined;
+
+    return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
+      Effect.map((index) => {
+        const limit = Math.max(
+          1,
+          Math.floor(input.limit ?? WORKSPACE_LIST_DIRECTORY_DEFAULT_LIMIT),
+        );
+        const matchingEntries = index.entries
+          .filter((entry) =>
+            normalizedParentPath === undefined
+              ? entry.parentPath === undefined
+              : entry.parentPath === normalizedParentPath,
+          )
+          .toSorted((left, right) => {
+            if (left.kind !== right.kind) {
+              return left.kind === "directory" ? -1 : 1;
+            }
+            return left.path.localeCompare(right.path);
+          });
+
+        return {
+          entries: matchingEntries.slice(0, limit),
+          truncated: matchingEntries.length > limit,
+        };
+      }),
+    );
+  });
+
   return {
     browse,
     invalidate,
+    listDirectory,
     search,
   } satisfies WorkspaceEntriesShape;
 });

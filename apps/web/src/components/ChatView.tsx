@@ -143,6 +143,7 @@ import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { FileExplorerSidebar } from "./FileExplorerSidebar";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -3253,7 +3254,7 @@ export default function ChatView(props: ChatViewProps) {
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}
-      <div className="flex min-h-0 min-w-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Messages Wrapper */}
@@ -3428,6 +3429,11 @@ export default function ChatView(props: ChatViewProps) {
             onClose={closePlanSidebar}
           />
         ) : null}
+        <FileExplorerSidebar
+          environmentId={environmentId}
+          resolvedTheme={resolvedTheme}
+          workspaceRoot={activeWorkspaceRoot}
+        />
       </div>
       {/* end horizontal flex container */}
 

@@ -2088,6 +2088,82 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc projects.listDirectory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-list-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src", "nested"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, "README.md"), "# readme\n");
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "index.ts"), "export {};\n");
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "nested", "keep.ts"), "keep\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const rootResponse = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsListDirectory]({
+            cwd: workspaceDir,
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        rootResponse.entries.map((entry) => [entry.kind, entry.path]),
+        [
+          ["directory", "src"],
+          ["file", "README.md"],
+        ],
+      );
+      assert.equal(rootResponse.truncated, false);
+
+      const nestedResponse = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsListDirectory]({
+            cwd: workspaceDir,
+            parentPath: "src",
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        nestedResponse.entries.map((entry) => [entry.kind, entry.path]),
+        [
+          ["directory", "src/nested"],
+          ["file", "src/index.ts"],
+        ],
+      );
+      assert.equal(nestedResponse.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.listDirectory errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-list-" });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsListDirectory]({
+            cwd: workspaceDir,
+            parentPath: "../escape",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectListDirectoryError");
+      assertInclude(
+        result.failure.message,
+        "Workspace file path must be relative to the project root",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.searchEntries errors", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

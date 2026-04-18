@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ServerProvider } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
+import { vi } from "vitest";
 
 import {
   hydrateCachedProvider,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
+  resolveProviderStatusCacheTempPath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
 
@@ -72,6 +74,20 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       assert.deepStrictEqual(yield* readProviderStatusCache(openCodePath), openCodeProvider);
     }),
   );
+
+  it("generates unique temp paths even when writes share the same millisecond", () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_776_471_759_080);
+
+    try {
+      const filePath = "/tmp/provider-cache/claudeAgent.json";
+      const first = resolveProviderStatusCacheTempPath(filePath);
+      const second = resolveProviderStatusCacheTempPath(filePath);
+
+      assert.notStrictEqual(first, second);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider("codex", {

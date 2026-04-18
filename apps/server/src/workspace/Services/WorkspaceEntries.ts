@@ -12,6 +12,8 @@ import type { Effect } from "effect";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
@@ -48,6 +50,14 @@ export interface WorkspaceEntriesShape {
   readonly browse: (
     input: FilesystemBrowseInput,
   ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntriesBrowseError>;
+
+  /**
+   * List the immediate children for a workspace directory using the cached
+   * workspace index.
+   */
+  readonly listDirectory: (
+    input: ProjectListDirectoryInput,
+  ) => Effect.Effect<ProjectListDirectoryResult, WorkspaceEntriesError>;
 
   /**
    * Search indexed workspace entries for files and directories matching the

@@ -78,6 +78,7 @@ function createTestClient() {
       },
     },
     projects: {
+      listDirectory: vi.fn(async () => ({ entries: [], truncated: false })),
       searchEntries: vi.fn(async () => []),
       writeFile: vi.fn(async () => undefined),
     },

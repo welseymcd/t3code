@@ -1,3 +1,4 @@
+import * as Crypto from "node:crypto";
 import * as nodePath from "node:path";
 import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@t3tools/contracts";
 import { Cause, Effect, FileSystem, Path, Schema } from "effect";
@@ -67,6 +68,9 @@ export const resolveProviderStatusCachePath = (input: {
   readonly provider: ServerProvider["provider"];
 }) => nodePath.join(input.cacheDir, `${input.provider}.json`);
 
+export const resolveProviderStatusCacheTempPath = (filePath: string): string =>
+  `${filePath}.${process.pid}.${Date.now()}.${Crypto.randomUUID()}.tmp`;
+
 export const readProviderStatusCache = (filePath: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -97,7 +101,7 @@ export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
 }) => {
-  const tempPath = `${input.filePath}.${process.pid}.${Date.now()}.tmp`;
+  const tempPath = resolveProviderStatusCacheTempPath(input.filePath);
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
