@@ -1,8 +1,11 @@
 import { EnvironmentId, type GitBranch } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  collectExistingWorktrees,
+  createExistingWorktreeValue,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  parseExistingWorktreeValue,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
@@ -11,6 +14,8 @@ import {
   resolveEnvModeLabel,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
+  resolveWorkspaceSelectValue,
+  resolveWorkspaceTriggerLabel,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 
@@ -153,8 +158,8 @@ describe("resolveCurrentWorkspaceLabel", () => {
     expect(resolveCurrentWorkspaceLabel(null)).toBe("Current checkout");
   });
 
-  it("describes the active checkout as a worktree when one is attached", () => {
-    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
+  it("keeps the checkout label stable when another worktree is attached", () => {
+    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current checkout");
   });
 });
 
@@ -165,6 +170,91 @@ describe("resolveLockedWorkspaceLabel", () => {
 
   it("uses a shorter label for an attached worktree", () => {
     expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
+  });
+});
+
+describe("resolveWorkspaceTriggerLabel", () => {
+  it("shows the selected worktree name when a worktree is active", () => {
+    expect(
+      resolveWorkspaceTriggerLabel({
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        effectiveEnvMode: "local",
+      }),
+    ).toBe("feature-a");
+  });
+
+  it("falls back to the env mode label when no worktree is attached", () => {
+    expect(
+      resolveWorkspaceTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+      }),
+    ).toBe("New worktree");
+  });
+});
+
+describe("resolveWorkspaceSelectValue", () => {
+  it("uses dedicated values for existing worktrees", () => {
+    expect(
+      resolveWorkspaceSelectValue({
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        effectiveEnvMode: "local",
+      }),
+    ).toBe(createExistingWorktreeValue("/repo/.t3/worktrees/feature-a"));
+  });
+
+  it("uses the env mode when no worktree is attached", () => {
+    expect(
+      resolveWorkspaceSelectValue({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+});
+
+describe("existing worktree values", () => {
+  it("round-trips encoded worktree values", () => {
+    const value = createExistingWorktreeValue("/repo/.t3/worktrees/feature-a");
+    expect(parseExistingWorktreeValue(value)).toBe("/repo/.t3/worktrees/feature-a");
+    expect(parseExistingWorktreeValue("local")).toBeNull();
+  });
+});
+
+describe("collectExistingWorktrees", () => {
+  it("dedupes by path and prefers the current worktree branch entry", () => {
+    expect(
+      collectExistingWorktrees([
+        {
+          name: "feature/one",
+          current: false,
+          worktreePath: "/repo/.t3/worktrees/feature-one",
+        },
+        {
+          name: "feature/two",
+          current: true,
+          worktreePath: "/repo/.t3/worktrees/feature-two",
+        },
+        {
+          name: "feature/two-backup",
+          current: false,
+          worktreePath: "/repo/.t3/worktrees/feature-two",
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "/repo/.t3/worktrees/feature-two",
+        branch: "feature/two",
+        label: "feature-two",
+        current: true,
+      },
+      {
+        path: "/repo/.t3/worktrees/feature-one",
+        branch: "feature/one",
+        label: "feature-one",
+        current: false,
+      },
+    ]);
   });
 });
 

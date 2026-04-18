@@ -19,9 +19,14 @@ interface BranchToolbarProps {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
-  onEnvModeChange: (mode: EnvMode) => void;
+  onWorkspaceChange: (input: {
+    envMode: EnvMode;
+    worktreePath: string | null;
+    branch?: string | null;
+  }) => void;
   effectiveEnvModeOverride?: EnvMode;
   activeThreadBranchOverride?: string | null;
+  activeWorktreePathOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -34,9 +39,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   environmentId,
   threadId,
   draftId,
-  onEnvModeChange,
+  onWorkspaceChange,
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
+  activeWorktreePathOverride,
   onActiveThreadBranchOverrideChange,
   envLocked,
   onCheckoutPullRequestRequest,
@@ -64,7 +70,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
   const activeProject = useStore(activeProjectSelector);
   const hasActiveThread = serverThread !== undefined || draftThread !== null;
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const activeWorktreePath =
+    activeWorktreePathOverride !== undefined
+      ? activeWorktreePathOverride
+      : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const effectiveEnvMode =
     effectiveEnvModeOverride ??
     resolveEffectiveEnvMode({
@@ -94,10 +103,12 @@ export const BranchToolbar = memo(function BranchToolbar({
           </>
         )}
         <BranchToolbarEnvModeSelector
+          environmentId={environmentId}
+          activeProjectCwd={activeProject.cwd}
           envLocked={envModeLocked}
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
-          onEnvModeChange={onEnvModeChange}
+          onWorkspaceChange={onWorkspaceChange}
         />
       </div>
 
@@ -108,6 +119,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         envLocked={envLocked}
         {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
         {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+        {...(activeWorktreePathOverride !== undefined ? { activeWorktreePathOverride } : {})}
         {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}

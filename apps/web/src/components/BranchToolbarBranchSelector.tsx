@@ -51,6 +51,7 @@ interface BranchToolbarBranchSelectorProps {
   envLocked: boolean;
   effectiveEnvModeOverride?: "local" | "worktree";
   activeThreadBranchOverride?: string | null;
+  activeWorktreePathOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -82,6 +83,7 @@ export function BranchToolbarBranchSelector({
   envLocked,
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
+  activeWorktreePathOverride,
   onActiveThreadBranchOverrideChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -118,7 +120,10 @@ export function BranchToolbarBranchSelector({
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const activeWorktreePath =
+    activeWorktreePathOverride !== undefined
+      ? activeWorktreePathOverride
+      : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.cwd ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== undefined;

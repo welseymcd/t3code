@@ -2706,6 +2706,117 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("lists existing worktrees in the workspace selector and moves selection between them", async () => {
+    const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        threads: snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID ? Object.assign({}, thread, { session: null }) : thread,
+        ),
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListBranches) {
+          return {
+            isRepo: true,
+            hasOriginRemote: true,
+            nextCursor: null,
+            totalCount: 3,
+            branches: [
+              {
+                name: "main",
+                current: true,
+                isDefault: true,
+                worktreePath: null,
+              },
+              {
+                name: "feature/alpha",
+                current: false,
+                isDefault: false,
+                worktreePath: "/repo/.t3/worktrees/feature-alpha",
+              },
+              {
+                name: "feature/beta",
+                current: false,
+                isDefault: false,
+                worktreePath: "/repo/.t3/worktrees/feature-beta",
+              },
+            ],
+          };
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      (await waitForButtonByText("Current checkout")).click();
+      await waitForSelectItemContainingText("feature-alpha");
+      await waitForSelectItemContainingText("feature-beta");
+
+      (await waitForSelectItemContainingText("feature-alpha")).click();
+
+      await vi.waitFor(
+        () => {
+          expect(findButtonByText("feature-alpha")).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      (await waitForButtonByText("feature-alpha")).click();
+      (await waitForSelectItemContainingText("feature-beta")).click();
+
+      await vi.waitFor(
+        () => {
+          expect(findButtonByText("feature-beta")).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Ship it");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const metaUpdateRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.meta.update" &&
+              request.threadId === THREAD_ID &&
+              request.worktreePath === "/repo/.t3/worktrees/feature-beta",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                threadId?: string;
+                branch?: string | null;
+                worktreePath?: string | null;
+              }
+            | undefined;
+
+          expect(metaUpdateRequest).toMatchObject({
+            type: "thread.meta.update",
+            threadId: THREAD_ID,
+            branch: "feature/beta",
+            worktreePath: "/repo/.t3/worktrees/feature-beta",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows the send state once bootstrap dispatch is in flight", async () => {
     useTerminalStateStore.setState({
       terminalStateByThreadKey: {},

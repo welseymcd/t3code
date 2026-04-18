@@ -4,12 +4,20 @@ export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
 } from "@t3tools/shared/git";
+import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   label: string;
   isPrimary: boolean;
+}
+
+export interface ExistingWorktreeOption {
+  path: string;
+  branch: string;
+  label: string;
+  current: boolean;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
@@ -46,12 +54,78 @@ export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
 
-export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+export function resolveCurrentWorkspaceLabel(_activeWorktreePath: string | null): string {
+  return resolveEnvModeLabel("local");
 }
 
 export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): string {
   return activeWorktreePath ? "Worktree" : "Local checkout";
+}
+
+const EXISTING_WORKTREE_VALUE_PREFIX = "__existing_worktree__:";
+
+export function createExistingWorktreeValue(path: string): string {
+  return `${EXISTING_WORKTREE_VALUE_PREFIX}${path}`;
+}
+
+export function parseExistingWorktreeValue(value: string): string | null {
+  return value.startsWith(EXISTING_WORKTREE_VALUE_PREFIX)
+    ? value.slice(EXISTING_WORKTREE_VALUE_PREFIX.length)
+    : null;
+}
+
+export function resolveWorkspaceTriggerLabel(input: {
+  activeWorktreePath: string | null;
+  effectiveEnvMode: EnvMode;
+}): string {
+  if (input.activeWorktreePath) {
+    return formatWorktreePathForDisplay(input.activeWorktreePath);
+  }
+  return resolveEnvModeLabel(input.effectiveEnvMode);
+}
+
+export function resolveWorkspaceSelectValue(input: {
+  activeWorktreePath: string | null;
+  effectiveEnvMode: EnvMode;
+}): string {
+  if (input.activeWorktreePath) {
+    return createExistingWorktreeValue(input.activeWorktreePath);
+  }
+  return input.effectiveEnvMode;
+}
+
+export function collectExistingWorktrees(
+  branches: readonly Pick<GitBranch, "current" | "name" | "worktreePath">[],
+): ExistingWorktreeOption[] {
+  const worktreesByPath = new Map<string, ExistingWorktreeOption>();
+
+  for (const branch of branches) {
+    if (!branch.worktreePath) {
+      continue;
+    }
+
+    const nextOption: ExistingWorktreeOption = {
+      path: branch.worktreePath,
+      branch: branch.name,
+      label: formatWorktreePathForDisplay(branch.worktreePath),
+      current: branch.current,
+    };
+    const existing = worktreesByPath.get(branch.worktreePath);
+    if (!existing || (!existing.current && nextOption.current)) {
+      worktreesByPath.set(branch.worktreePath, nextOption);
+    }
+  }
+
+  return [...worktreesByPath.values()].toSorted((a, b) => {
+    if (a.current !== b.current) {
+      return a.current ? -1 : 1;
+    }
+    const labelCompare = a.label.localeCompare(b.label);
+    if (labelCompare !== 0) {
+      return labelCompare;
+    }
+    return a.branch.localeCompare(b.branch);
+  });
 }
 
 export function resolveEffectiveEnvMode(input: {
