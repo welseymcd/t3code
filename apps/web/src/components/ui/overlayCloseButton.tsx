@@ -2,7 +2,7 @@
 
 import { mergeProps } from "@base-ui/react/merge-props";
 import { XIcon } from "lucide-react";
-import type * as React from "react";
+import * as React from "react";
 
 import { buttonVariants } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
@@ -10,7 +10,10 @@ import { cn } from "~/lib/utils";
 const overlayCloseButtonClassName =
   "absolute end-2 top-2 z-20 pointer-events-auto [-webkit-app-region:no-drag]";
 
-function OverlayCloseButton(props: React.ComponentPropsWithoutRef<"button">) {
+const OverlayCloseButton = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentPropsWithoutRef<"button">
+>(function OverlayCloseButton(props, ref) {
   return (
     <button
       {...mergeProps<"button">(props, {
@@ -25,8 +28,11 @@ function OverlayCloseButton(props: React.ComponentPropsWithoutRef<"button">) {
         children: <XIcon />,
         type: "button",
       })}
+      ref={ref}
     />
   );
-}
+});
+
+OverlayCloseButton.displayName = "OverlayCloseButton";
 
 export { OverlayCloseButton, overlayCloseButtonClassName };

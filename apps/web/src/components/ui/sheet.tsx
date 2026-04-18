@@ -94,10 +94,7 @@ function SheetPopup({
         >
           {children}
           {showCloseButton && (
-            <SheetPrimitive.Close
-              aria-label="Close"
-              render={(props) => <OverlayCloseButton {...props} />}
-            />
+            <SheetPrimitive.Close aria-label="Close" render={<OverlayCloseButton />} />
           )}
         </SheetPrimitive.Popup>
       </SheetViewport>

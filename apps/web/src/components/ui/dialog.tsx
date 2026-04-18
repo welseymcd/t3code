@@ -73,10 +73,7 @@ function DialogPopup({
         >
           {children}
           {showCloseButton && (
-            <DialogPrimitive.Close
-              aria-label="Close"
-              render={(props) => <OverlayCloseButton {...props} />}
-            />
+            <DialogPrimitive.Close aria-label="Close" render={<OverlayCloseButton />} />
           )}
         </DialogPrimitive.Popup>
       </DialogViewport>
