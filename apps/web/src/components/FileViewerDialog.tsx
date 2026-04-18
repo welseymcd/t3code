@@ -1,18 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
-import { PROJECT_READ_FILE_MAX_BYTES_LIMIT } from "@t3tools/contracts";
-import { ExternalLinkIcon, LoaderIcon } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PROJECT_READ_FILE_MAX_BYTES_LIMIT, type ProjectReadFileResult } from "@t3tools/contracts";
+import { LoaderIcon, SaveIcon } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type * as MonacoApi from "monaco-editor";
 
-import { openInPreferredEditor } from "../editorPreferences";
+import { ensureEnvironmentApi } from "../environmentApi";
 import { type FileViewerRequest, useFileViewerState } from "../fileViewerState";
 import { useTheme } from "../hooks/useTheme";
-import { projectReadFileQueryOptions } from "../lib/projectReactQuery";
-import { readLocalApi } from "../localApi";
+import { projectQueryKeys, projectReadFileQueryOptions } from "../lib/projectReactQuery";
+import { ensureLocalApi } from "../localApi";
 import { configureMonaco } from "../monacoSetup";
 import { cn } from "../lib/utils";
 import { toastManager } from "./ui/toast";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
+import {
+  canEditFileContents,
+  hasUnsavedFileChanges,
+  isFileViewerSaveShortcut,
+} from "./fileViewerEditing";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -84,7 +89,11 @@ export function FileViewerDialog() {
   const request = useFileViewerState((state) => state.request);
   const close = useFileViewerState((state) => state.close);
   const { resolvedTheme } = useTheme();
+  const queryClient = useQueryClient();
   const editorRef = useRef<MonacoApi.editor.IStandaloneCodeEditor | null>(null);
+  const initializedRequestKeyRef = useRef<string | null>(null);
+  const [savedContent, setSavedContent] = useState("");
+  const [draftContent, setDraftContent] = useState("");
   const query = useQuery(
     projectReadFileQueryOptions({
       environmentId: request?.environmentId ?? null,
@@ -101,25 +110,132 @@ export function FileViewerDialog() {
     revealPosition(editorRef.current, request);
   }, [request]);
 
-  const openExternal = useCallback(async () => {
+  const requestKey = useMemo(() => {
     if (!request) {
+      return null;
+    }
+    return [request.environmentId, request.workspaceRoot, request.relativePath].join(":");
+  }, [request]);
+
+  useEffect(() => {
+    if (!requestKey) {
+      initializedRequestKeyRef.current = null;
+      setSavedContent("");
+      setDraftContent("");
       return;
     }
-    const api = readLocalApi();
-    if (!api) {
-      throw new Error("Open in editor is unavailable");
+
+    if (!query.data || !canEditFileContents(query.data)) {
+      return;
     }
-    await openInPreferredEditor(
-      api,
-      [
-        request.absolutePath,
-        typeof request.line === "number" ? request.line : null,
-        typeof request.column === "number" ? request.column : null,
-      ]
-        .filter((part): part is string | number => part !== null)
-        .join(":"),
-    );
-  }, [request]);
+
+    if (initializedRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    initializedRequestKeyRef.current = requestKey;
+    setSavedContent(query.data.content);
+    setDraftContent(query.data.content);
+  }, [query.data, requestKey]);
+
+  const isEditable = canEditFileContents(query.data);
+  const isDirty = isEditable && hasUnsavedFileChanges(savedContent, draftContent);
+
+  const saveMutation = useMutation({
+    mutationFn: async (contents: string) => {
+      if (!request) {
+        throw new Error("Workspace file saving is unavailable.");
+      }
+      const api = ensureEnvironmentApi(request.environmentId);
+      return api.projects.writeFile({
+        cwd: request.workspaceRoot,
+        relativePath: request.relativePath,
+        contents,
+      });
+    },
+    onSuccess: (result, contents) => {
+      if (!request) {
+        return;
+      }
+
+      setSavedContent(contents);
+      queryClient.setQueryData<ProjectReadFileResult>(
+        projectQueryKeys.readFile(
+          request.environmentId,
+          request.workspaceRoot,
+          request.relativePath,
+        ),
+        (previous) =>
+          previous
+            ? {
+                ...previous,
+                content: contents,
+                sizeBytes: new TextEncoder().encode(contents).length,
+                truncated: false,
+                isBinary: false,
+              }
+            : previous,
+      );
+      toastManager.add({
+        type: "success",
+        title: "File saved",
+        description: result.relativePath,
+      });
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not save file",
+        description: error instanceof Error ? error.message : "An unknown error occurred.",
+      });
+    },
+  });
+
+  const handleSave = useCallback(() => {
+    if (!request || !isEditable || !isDirty || saveMutation.isPending) {
+      return;
+    }
+
+    void saveMutation.mutateAsync(draftContent);
+  }, [draftContent, isDirty, isEditable, request, saveMutation]);
+
+  useEffect(() => {
+    if (!request || !isEditable) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isFileViewerSaveShortcut(event)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      handleSave();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleSave, isEditable, request]);
+
+  const attemptClose = useCallback(async () => {
+    if (saveMutation.isPending) {
+      return;
+    }
+
+    if (isDirty) {
+      const confirmed = await ensureLocalApi().dialogs.confirm(
+        "Discard unsaved changes to this file?",
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    close();
+  }, [close, isDirty, saveMutation.isPending]);
 
   const titlePath = useMemo(() => request?.relativePath ?? request?.absolutePath ?? "", [request]);
 
@@ -128,7 +244,7 @@ export function FileViewerDialog() {
       open={request !== null}
       onOpenChange={(open) => {
         if (!open) {
-          close();
+          void attemptClose();
         }
       }}
     >
@@ -152,29 +268,31 @@ export function FileViewerDialog() {
               </DialogDescription>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {isEditable ? (
+                <Badge variant="secondary">{isDirty ? "Unsaved changes" : "Saved"}</Badge>
+              ) : query.data && !query.data.isBinary ? (
+                <Badge variant="secondary">Read-only</Badge>
+              ) : null}
               {query.data?.truncated ? <Badge variant="secondary">Truncated</Badge> : null}
               {query.data?.isBinary ? <Badge variant="secondary">Binary</Badge> : null}
               {query.data ? (
                 <Badge variant="secondary">{formatBytes(query.data.sizeBytes)}</Badge>
               ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  void openExternal().catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Unable to open file",
-                      description:
-                        error instanceof Error ? error.message : "An unknown error occurred.",
-                    });
-                  });
-                }}
-              >
-                <ExternalLinkIcon className="size-4" />
-                Open in editor
-              </Button>
+              {isEditable ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={!isDirty || saveMutation.isPending}
+                >
+                  {saveMutation.isPending ? (
+                    <LoaderIcon className="size-4 animate-spin" />
+                  ) : (
+                    <SaveIcon className="size-4" />
+                  )}
+                  Save
+                </Button>
+              ) : null}
             </div>
           </div>
         </DialogHeader>
@@ -191,7 +309,7 @@ export function FileViewerDialog() {
                 Binary files can’t be previewed.
               </p>
               <p className="max-w-md text-sm text-muted-foreground">
-                Open this file in your editor to inspect it directly.
+                This file is not editable here.
               </p>
             </div>
           ) : (
@@ -206,21 +324,27 @@ export function FileViewerDialog() {
                   ].join(":")}
                   height="100%"
                   path={request.absolutePath}
-                  value={query.data?.content ?? ""}
+                  value={isEditable ? draftContent : (query.data?.content ?? "")}
                   theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
                   loading={<FileViewerLoadingState />}
                   options={{
                     automaticLayout: true,
-                    domReadOnly: true,
+                    domReadOnly: !isEditable,
                     fontSize: 13,
                     glyphMargin: false,
                     lineNumbersMinChars: 3,
                     minimap: { enabled: false },
-                    readOnly: true,
+                    readOnly: !isEditable,
                     renderValidationDecorations: "off",
                     scrollBeyondLastLine: false,
                     stickyScroll: { enabled: false },
                     wordWrap: "off",
+                  }}
+                  onChange={(nextValue) => {
+                    if (!isEditable) {
+                      return;
+                    }
+                    setDraftContent(nextValue ?? "");
                   }}
                   onMount={(editor, monaco) => {
                     editorRef.current = editor;
@@ -245,7 +369,8 @@ export function FileViewerDialog() {
               )}
             >
               Showing the first {formatBytes(PROJECT_READ_FILE_MAX_BYTES_LIMIT)} of{" "}
-              {formatBytes(query.data.sizeBytes)}.
+              {formatBytes(query.data.sizeBytes)}. Editing is disabled to avoid overwriting unseen
+              content.
             </div>
           ) : null}
         </DialogPanel>
