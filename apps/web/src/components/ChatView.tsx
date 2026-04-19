@@ -694,6 +694,8 @@ export default function ChatView(props: ChatViewProps) {
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
   const previousActivePlanRef = useRef<ReturnType<typeof deriveActivePlanState> | null>(null);
+  const currentActivePlanRef = useRef<ReturnType<typeof deriveActivePlanState> | null>(null);
+  const suppressNonDefaultAutoOpenOnFirstPlanForThreadRef = useRef(false);
   const recoveredDeletedWorktreePathRef = useRef<string | null>(null);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
@@ -1136,6 +1138,7 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  currentActivePlanRef.current = activePlan;
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
@@ -2108,11 +2111,22 @@ export default function ChatView(props: ChatViewProps) {
     }
     planSidebarDismissedForTurnRef.current = null;
     previousActivePlanRef.current = null;
+    suppressNonDefaultAutoOpenOnFirstPlanForThreadRef.current =
+      currentActivePlanRef.current !== null;
   }, [activeThread?.id]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
   useEffect(() => {
+    if (
+      settings.planSidebarAutoOpenMode !== "default" &&
+      suppressNonDefaultAutoOpenOnFirstPlanForThreadRef.current &&
+      activePlan
+    ) {
+      previousActivePlanRef.current = activePlan;
+      suppressNonDefaultAutoOpenOnFirstPlanForThreadRef.current = false;
+      return;
+    }
     const previousActivePlan = previousActivePlanRef.current;
     if (
       shouldAutoOpenPlanSidebar({
@@ -2128,6 +2142,9 @@ export default function ChatView(props: ChatViewProps) {
       setPlanSidebarOpen(true);
     }
     previousActivePlanRef.current = activePlan;
+    if (activePlan) {
+      suppressNonDefaultAutoOpenOnFirstPlanForThreadRef.current = false;
+    }
   }, [
     activePlan,
     activeLatestTurn?.turnId,
