@@ -534,6 +534,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       diffWordWrap: true,
       fileViewer: "internal" as const,
+      planSidebarAutoOpenMode: "default" as const,
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
         "environment-local:/tmp/project": "separate" as const,
@@ -592,6 +593,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       diffWordWrap: true,
       fileViewer: "internal" as const,
+      planSidebarAutoOpenMode: "default" as const,
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
         "environment-local:/tmp/project": "separate" as const,

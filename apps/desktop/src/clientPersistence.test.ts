@@ -53,6 +53,7 @@ const clientSettings: ClientSettings = {
   confirmThreadDelete: false,
   diffWordWrap: true,
   fileViewer: "internal",
+  planSidebarAutoOpenMode: "default",
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",

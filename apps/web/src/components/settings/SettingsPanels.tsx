@@ -19,7 +19,10 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  type PlanSidebarAutoOpenMode,
+} from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
@@ -105,6 +108,12 @@ const FILE_VIEWER_LABELS = {
   internal: "Internal Monaco",
   external: "External editor",
 } as const;
+
+const PLAN_SIDEBAR_AUTO_OPEN_LABELS: Record<PlanSidebarAutoOpenMode, string> = {
+  default: "Default",
+  on_update: "On update",
+  manual: "Manual",
+};
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -466,6 +475,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Time format"]
         : []),
       ...(settings.fileViewer !== DEFAULT_UNIFIED_SETTINGS.fileViewer ? ["File viewer"] : []),
+      ...(settings.planSidebarAutoOpenMode !== DEFAULT_UNIFIED_SETTINGS.planSidebarAutoOpenMode
+        ? ["Plan sidebar auto-open"]
+        : []),
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
@@ -497,6 +509,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.fileViewer,
+      settings.planSidebarAutoOpenMode,
       settings.timestampFormat,
       theme,
     ],
@@ -925,6 +938,51 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="external">
                   {FILE_VIEWER_LABELS.external}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Plan sidebar auto-open"
+          description="Default preserves the current behavior. On update reopens when steps are added or completed. Manual opens only for a brand new plan unless you open it yourself."
+          resetAction={
+            settings.planSidebarAutoOpenMode !==
+            DEFAULT_UNIFIED_SETTINGS.planSidebarAutoOpenMode ? (
+              <SettingResetButton
+                label="plan sidebar auto-open"
+                onClick={() =>
+                  updateSettings({
+                    planSidebarAutoOpenMode: DEFAULT_UNIFIED_SETTINGS.planSidebarAutoOpenMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.planSidebarAutoOpenMode}
+              onValueChange={(value) => {
+                if (value === "default" || value === "on_update" || value === "manual") {
+                  updateSettings({ planSidebarAutoOpenMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Plan sidebar auto-open">
+                <SelectValue>
+                  {PLAN_SIDEBAR_AUTO_OPEN_LABELS[settings.planSidebarAutoOpenMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="default">
+                  {PLAN_SIDEBAR_AUTO_OPEN_LABELS.default}
+                </SelectItem>
+                <SelectItem hideIndicator value="on_update">
+                  {PLAN_SIDEBAR_AUTO_OPEN_LABELS.on_update}
+                </SelectItem>
+                <SelectItem hideIndicator value="manual">
+                  {PLAN_SIDEBAR_AUTO_OPEN_LABELS.manual}
                 </SelectItem>
               </SelectPopup>
             </Select>

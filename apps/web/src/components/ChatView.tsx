@@ -58,6 +58,7 @@ import {
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
+  shouldAutoOpenPlanSidebar,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
@@ -692,6 +693,7 @@ export default function ChatView(props: ChatViewProps) {
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
+  const previousActivePlanRef = useRef<ReturnType<typeof deriveActivePlanState> | null>(null);
   const recoveredDeletedWorktreePathRef = useRef<string | null>(null);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
@@ -2105,19 +2107,34 @@ export default function ChatView(props: ChatViewProps) {
       setPlanSidebarOpen(false);
     }
     planSidebarDismissedForTurnRef.current = null;
+    previousActivePlanRef.current = null;
   }, [activeThread?.id]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
   useEffect(() => {
-    if (!activePlan) return;
-    if (planSidebarOpen) return;
-    const latestTurnId = activeLatestTurn?.turnId ?? null;
-    if (latestTurnId && activePlan.turnId !== latestTurnId) return;
-    const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-    if (planSidebarDismissedForTurnRef.current === turnKey) return;
-    setPlanSidebarOpen(true);
-  }, [activePlan, activeLatestTurn?.turnId, planSidebarOpen, sidebarProposedPlan?.turnId]);
+    const previousActivePlan = previousActivePlanRef.current;
+    if (
+      shouldAutoOpenPlanSidebar({
+        autoOpenMode: settings.planSidebarAutoOpenMode,
+        currentPlan: activePlan,
+        previousPlan: previousActivePlan,
+        planSidebarOpen,
+        latestTurnId: activeLatestTurn?.turnId ?? null,
+        dismissedTurnKey: planSidebarDismissedForTurnRef.current,
+        sidebarProposedPlanTurnId: sidebarProposedPlan?.turnId ?? null,
+      })
+    ) {
+      setPlanSidebarOpen(true);
+    }
+    previousActivePlanRef.current = activePlan;
+  }, [
+    activePlan,
+    activeLatestTurn?.turnId,
+    planSidebarOpen,
+    settings.planSidebarAutoOpenMode,
+    sidebarProposedPlan?.turnId,
+  ]);
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);

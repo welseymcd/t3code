@@ -11,7 +11,6 @@ import {
   deriveCompletionDividerBeforeEntryId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
-  PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
@@ -21,6 +20,7 @@ import {
   hasActionableProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
+  shouldAutoOpenPlanSidebar,
 } from "./session-logic";
 
 function makeActivity(overrides: {
@@ -366,6 +366,116 @@ describe("deriveActivePlanState", () => {
       turnId: "turn-1",
       steps: [{ step: "Write tests", status: "completed" }],
     });
+  });
+});
+
+describe("shouldAutoOpenPlanSidebar", () => {
+  const planBase = {
+    createdAt: "2026-02-23T00:00:01.000Z",
+    turnId: TurnId.make("turn-1"),
+    steps: [{ step: "Inspect code", status: "pending" as const }],
+  };
+
+  it("preserves the existing default behavior for the active turn", () => {
+    expect(
+      shouldAutoOpenPlanSidebar({
+        autoOpenMode: "default",
+        currentPlan: planBase,
+        previousPlan: null,
+        planSidebarOpen: false,
+        latestTurnId: TurnId.make("turn-1"),
+        dismissedTurnKey: null,
+        sidebarProposedPlanTurnId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not reopen in default mode after the user dismissed the current turn", () => {
+    expect(
+      shouldAutoOpenPlanSidebar({
+        autoOpenMode: "default",
+        currentPlan: planBase,
+        previousPlan: {
+          ...planBase,
+          steps: [
+            { step: "Inspect code", status: "completed" as const },
+            { step: "Run checks", status: "pending" as const },
+          ],
+        },
+        planSidebarOpen: false,
+        latestTurnId: TurnId.make("turn-1"),
+        dismissedTurnKey: "turn-1",
+        sidebarProposedPlanTurnId: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("reopens in on-update mode when the agent adds a new step", () => {
+    expect(
+      shouldAutoOpenPlanSidebar({
+        autoOpenMode: "on_update",
+        currentPlan: {
+          ...planBase,
+          steps: [
+            { step: "Inspect code", status: "pending" as const },
+            { step: "Run checks", status: "pending" as const },
+          ],
+        },
+        previousPlan: planBase,
+        planSidebarOpen: false,
+        latestTurnId: TurnId.make("turn-1"),
+        dismissedTurnKey: "turn-1",
+        sidebarProposedPlanTurnId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("reopens in on-update mode when the agent marks a step completed", () => {
+    expect(
+      shouldAutoOpenPlanSidebar({
+        autoOpenMode: "on_update",
+        currentPlan: {
+          ...planBase,
+          steps: [{ step: "Inspect code", status: "completed" as const }],
+        },
+        previousPlan: planBase,
+        planSidebarOpen: false,
+        latestTurnId: TurnId.make("turn-1"),
+        dismissedTurnKey: "turn-1",
+        sidebarProposedPlanTurnId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("stays closed in manual mode for step updates after the first plan", () => {
+    expect(
+      shouldAutoOpenPlanSidebar({
+        autoOpenMode: "manual",
+        currentPlan: {
+          ...planBase,
+          steps: [{ step: "Inspect code", status: "completed" as const }],
+        },
+        previousPlan: planBase,
+        planSidebarOpen: false,
+        latestTurnId: TurnId.make("turn-1"),
+        dismissedTurnKey: null,
+        sidebarProposedPlanTurnId: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("still opens in manual mode for a brand new plan", () => {
+    expect(
+      shouldAutoOpenPlanSidebar({
+        autoOpenMode: "manual",
+        currentPlan: planBase,
+        previousPlan: null,
+        planSidebarOpen: false,
+        latestTurnId: TurnId.make("turn-1"),
+        dismissedTurnKey: null,
+        sidebarProposedPlanTurnId: null,
+      }),
+    ).toBe(true);
   });
 });
 

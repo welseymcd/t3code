@@ -12,6 +12,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { type PlanSidebarAutoOpenMode } from "@t3tools/contracts/settings";
 
 import type {
   ChatMessage,
@@ -465,6 +466,106 @@ export function hasActionableProposedPlan(
   proposedPlan: LatestProposedPlanState | Pick<ProposedPlan, "implementedAt"> | null,
 ): boolean {
   return proposedPlan !== null && proposedPlan.implementedAt === null;
+}
+
+function countPlanStepsByLabel(
+  plan: ActivePlanState | null,
+): ReadonlyMap<string, { total: number; completed: number }> {
+  const counts = new Map<string, { total: number; completed: number }>();
+  if (!plan) {
+    return counts;
+  }
+  for (const step of plan.steps) {
+    const previous = counts.get(step.step) ?? { total: 0, completed: 0 };
+    counts.set(step.step, {
+      total: previous.total + 1,
+      completed: previous.completed + (step.status === "completed" ? 1 : 0),
+    });
+  }
+  return counts;
+}
+
+function planAddsNewItems(
+  previousPlan: ActivePlanState | null,
+  nextPlan: ActivePlanState,
+): boolean {
+  if (!previousPlan || previousPlan.turnId !== nextPlan.turnId) {
+    return true;
+  }
+  const previousCounts = countPlanStepsByLabel(previousPlan);
+  for (const [step, nextCount] of countPlanStepsByLabel(nextPlan)) {
+    const previousCount = previousCounts.get(step)?.total ?? 0;
+    if (nextCount.total > previousCount) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function planMarksItemsCompleted(
+  previousPlan: ActivePlanState | null,
+  nextPlan: ActivePlanState,
+): boolean {
+  if (!previousPlan || previousPlan.turnId !== nextPlan.turnId) {
+    return false;
+  }
+  const previousCounts = countPlanStepsByLabel(previousPlan);
+  for (const [step, nextCount] of countPlanStepsByLabel(nextPlan)) {
+    const previousCompleted = previousCounts.get(step)?.completed ?? 0;
+    if (nextCount.completed > previousCompleted) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function shouldAutoOpenPlanSidebar(input: {
+  autoOpenMode: PlanSidebarAutoOpenMode;
+  currentPlan: ActivePlanState | null;
+  previousPlan: ActivePlanState | null;
+  planSidebarOpen: boolean;
+  latestTurnId: TurnId | null;
+  dismissedTurnKey: string | null;
+  sidebarProposedPlanTurnId: TurnId | null;
+}): boolean {
+  const {
+    autoOpenMode,
+    currentPlan,
+    previousPlan,
+    planSidebarOpen,
+    latestTurnId,
+    dismissedTurnKey,
+    sidebarProposedPlanTurnId,
+  } = input;
+
+  if (!currentPlan || planSidebarOpen) {
+    return false;
+  }
+  if (latestTurnId && currentPlan.turnId !== latestTurnId) {
+    return false;
+  }
+
+  const turnKey = currentPlan.turnId ?? sidebarProposedPlanTurnId ?? "__dismissed__";
+  const isBrandNewPlan = !previousPlan || previousPlan.turnId !== currentPlan.turnId;
+
+  if (autoOpenMode === "manual") {
+    return isBrandNewPlan;
+  }
+
+  if (autoOpenMode === "on_update") {
+    if (isBrandNewPlan) {
+      return true;
+    }
+    return (
+      planAddsNewItems(previousPlan, currentPlan) ||
+      planMarksItemsCompleted(previousPlan, currentPlan)
+    );
+  }
+
+  if (dismissedTurnKey === turnKey) {
+    return false;
+  }
+  return true;
 }
 
 export function deriveWorkLogEntries(
