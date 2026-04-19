@@ -3,6 +3,7 @@ import { PROJECT_READ_FILE_MAX_BYTES_LIMIT, type ProjectReadFileResult } from "@
 import { LoaderIcon, SaveIcon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type * as MonacoApi from "monaco-editor";
+import type { DialogRoot } from "@base-ui/react/dialog";
 
 import { ensureEnvironmentApi } from "../environmentApi";
 import { type FileViewerRequest, useFileViewerState } from "../fileViewerState";
@@ -11,15 +12,21 @@ import { projectQueryKeys, projectReadFileQueryOptions } from "../lib/projectRea
 import { ensureLocalApi } from "../localApi";
 import { configureMonaco } from "../monacoSetup";
 import { cn } from "../lib/utils";
+import ChatMarkdown from "./ChatMarkdown";
 import { toastManager } from "./ui/toast";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import {
   canEditFileContents,
+  getDefaultMarkdownView,
+  type FileViewerMarkdownView,
   hasUnsavedFileChanges,
   isFileViewerSaveShortcut,
+  isMarkdownFilePath,
+  shouldIgnoreImmediateFileViewerDismiss,
 } from "./fileViewerEditing";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import {
   Dialog,
   DialogDescription,
@@ -30,6 +37,8 @@ import {
 } from "./ui/dialog";
 
 configureMonaco();
+
+const FILE_VIEWER_IMMEDIATE_OUTSIDE_DISMISS_GUARD_MS = 300;
 
 const MonacoEditor = lazy(async () => {
   const module = await import("@monaco-editor/react");
@@ -92,8 +101,10 @@ export function FileViewerDialog() {
   const queryClient = useQueryClient();
   const editorRef = useRef<MonacoApi.editor.IStandaloneCodeEditor | null>(null);
   const initializedRequestKeyRef = useRef<string | null>(null);
+  const openedAtRef = useRef(0);
   const [savedContent, setSavedContent] = useState("");
   const [draftContent, setDraftContent] = useState("");
+  const [markdownView, setMarkdownView] = useState<FileViewerMarkdownView>("source");
   const query = useQuery(
     projectReadFileQueryOptions({
       environmentId: request?.environmentId ?? null,
@@ -104,11 +115,28 @@ export function FileViewerDialog() {
   );
 
   useEffect(() => {
+    if (request) {
+      openedAtRef.current = Date.now();
+    }
+  }, [request]);
+
+  useEffect(() => {
     if (!request || !editorRef.current) {
       return;
     }
     revealPosition(editorRef.current, request);
   }, [request]);
+
+  useEffect(() => {
+    setMarkdownView(
+      getDefaultMarkdownView({
+        absolutePath: request?.absolutePath,
+        relativePath: request?.relativePath,
+        line: request?.line,
+        column: request?.column,
+      }),
+    );
+  }, [request?.absolutePath, request?.relativePath, request?.line, request?.column]);
 
   const requestKey = useMemo(() => {
     if (!request) {
@@ -140,6 +168,13 @@ export function FileViewerDialog() {
 
   const isEditable = canEditFileContents(query.data);
   const isDirty = isEditable && hasUnsavedFileChanges(savedContent, draftContent);
+  const isMarkdownFile = isMarkdownFilePath(request?.absolutePath ?? request?.relativePath);
+  const showMarkdownToggle = isMarkdownFile && !!query.data && !query.data.isBinary;
+  const showMarkdownPreview = showMarkdownToggle && markdownView === "preview";
+  const displayedContent =
+    isEditable && initializedRequestKeyRef.current === requestKey
+      ? draftContent
+      : (query.data?.content ?? "");
 
   const saveMutation = useMutation({
     mutationFn: async (contents: string) => {
@@ -200,7 +235,7 @@ export function FileViewerDialog() {
   }, [draftContent, isDirty, isEditable, request, saveMutation]);
 
   useEffect(() => {
-    if (!request || !isEditable) {
+    if (!request || !isEditable || showMarkdownPreview) {
       return;
     }
 
@@ -218,7 +253,7 @@ export function FileViewerDialog() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleSave, isEditable, request]);
+  }, [handleSave, isEditable, request, showMarkdownPreview]);
 
   const attemptClose = useCallback(async () => {
     if (saveMutation.isPending) {
@@ -242,13 +277,23 @@ export function FileViewerDialog() {
   return (
     <Dialog
       open={request !== null}
-      onOpenChange={(open) => {
+      onOpenChange={(open, eventDetails?: DialogRoot.ChangeEventDetails) => {
         if (!open) {
+          if (
+            shouldIgnoreImmediateFileViewerDismiss({
+              openedAtMs: openedAtRef.current,
+              dismissedAtMs: Date.now(),
+              reason: eventDetails?.reason,
+              guardWindowMs: FILE_VIEWER_IMMEDIATE_OUTSIDE_DISMISS_GUARD_MS,
+            })
+          ) {
+            return;
+          }
           void attemptClose();
         }
       }}
     >
-      <DialogPopup className="max-w-[min(94vw,96rem)] overflow-hidden p-0">
+      <DialogPopup animateTransform={false} className="max-w-[min(94vw,96rem)] overflow-hidden p-0">
         <DialogHeader className="border-b border-border/70 px-5 py-4 pr-16">
           <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -278,7 +323,27 @@ export function FileViewerDialog() {
               {query.data ? (
                 <Badge variant="secondary">{formatBytes(query.data.sizeBytes)}</Badge>
               ) : null}
-              {isEditable ? (
+              {showMarkdownToggle ? (
+                <ToggleGroup
+                  variant="outline"
+                  size="xs"
+                  value={[markdownView]}
+                  onValueChange={(value) => {
+                    const nextValue = value[0];
+                    if (nextValue === "preview" || nextValue === "source") {
+                      setMarkdownView(nextValue);
+                    }
+                  }}
+                >
+                  <Toggle value="preview" aria-label="Markdown preview">
+                    Preview
+                  </Toggle>
+                  <Toggle value="source" aria-label="Markdown source">
+                    Source
+                  </Toggle>
+                </ToggleGroup>
+              ) : null}
+              {isEditable && !showMarkdownPreview ? (
                 <Button
                   type="button"
                   size="sm"
@@ -312,6 +377,16 @@ export function FileViewerDialog() {
                 This file is not editable here.
               </p>
             </div>
+          ) : showMarkdownPreview ? (
+            <div className="min-h-0 flex-1 overflow-y-auto bg-background px-5 py-4">
+              <div className="mx-auto w-full max-w-4xl">
+                <ChatMarkdown
+                  text={displayedContent}
+                  cwd={request.workspaceRoot}
+                  environmentId={request.environmentId}
+                />
+              </div>
+            </div>
           ) : (
             <div className="min-h-0 flex-1 bg-background">
               <Suspense fallback={<FileViewerLoadingState />}>
@@ -324,7 +399,7 @@ export function FileViewerDialog() {
                   ].join(":")}
                   height="100%"
                   path={request.absolutePath}
-                  value={isEditable ? draftContent : (query.data?.content ?? "")}
+                  value={displayedContent}
                   theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
                   loading={<FileViewerLoadingState />}
                   options={{

@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import ChatView from "../components/ChatView";
+import { FileViewerDialog } from "../components/FileViewerDialog";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -55,13 +56,16 @@ function DraftChatThreadRouteView() {
 
   if (canonicalThreadRef) {
     return (
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-        <ChatView
-          environmentId={canonicalThreadRef.environmentId}
-          threadId={canonicalThreadRef.threadId}
-          routeKind="server"
-        />
-      </SidebarInset>
+      <>
+        <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+          <ChatView
+            environmentId={canonicalThreadRef.environmentId}
+            threadId={canonicalThreadRef.threadId}
+            routeKind="server"
+          />
+        </SidebarInset>
+        <FileViewerDialog />
+      </>
     );
   }
 
@@ -70,14 +74,17 @@ function DraftChatThreadRouteView() {
   }
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <ChatView
-        draftId={draftId}
-        environmentId={draftSession.environmentId}
-        threadId={draftSession.threadId}
-        routeKind="draft"
-      />
-    </SidebarInset>
+    <>
+      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+        <ChatView
+          draftId={draftId}
+          environmentId={draftSession.environmentId}
+          threadId={draftSession.threadId}
+          routeKind="draft"
+        />
+      </SidebarInset>
+      <FileViewerDialog />
+    </>
   );
 }
 
