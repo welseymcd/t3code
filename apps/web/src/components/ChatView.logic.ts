@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type GitStatusResult,
+  PROVIDER_DISPLAY_NAMES,
   ProjectId,
   type ModelSelection,
   type ProviderKind,
@@ -140,6 +141,13 @@ export interface PullRequestDialogState {
   key: number;
 }
 
+export interface ProviderSessionFailure {
+  provider: ProviderKind;
+  reason: string;
+  title: string;
+  description: string;
+}
+
 export function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -226,6 +234,58 @@ export function buildExpiredTerminalContextToastCopy(
   return {
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
+  };
+}
+
+function isGracefulProviderStop(reason: string): boolean {
+  return reason.trim().toLowerCase() === "session stopped";
+}
+
+function isUnexpectedProviderExit(reason: string): boolean {
+  const normalized = reason.toLowerCase();
+  return (
+    normalized.includes("app-server exited") ||
+    normalized.includes("process errored") ||
+    normalized.includes("signal=") ||
+    normalized.includes("sigbus") ||
+    normalized.includes("segmentation fault") ||
+    normalized.includes("provider crashed") ||
+    normalized.includes("session exited")
+  );
+}
+
+export function resolveProviderSessionFailure(input: {
+  session: ThreadSession | null;
+  latestTurn: Thread["latestTurn"] | null;
+}): ProviderSessionFailure | null {
+  const session = input.session;
+  const reason = session?.lastError?.trim();
+  if (!session || !reason) {
+    return null;
+  }
+  if (isGracefulProviderStop(reason)) {
+    return null;
+  }
+  if (session.orchestrationStatus !== "stopped" && session.orchestrationStatus !== "error") {
+    return null;
+  }
+  if (!isUnexpectedProviderExit(reason)) {
+    return null;
+  }
+
+  const providerLabel = PROVIDER_DISPLAY_NAMES[session.provider] ?? session.provider;
+  const interruptedTurn =
+    input.latestTurn?.startedAt !== null &&
+    input.latestTurn?.startedAt !== undefined &&
+    input.latestTurn.completedAt === null;
+
+  return {
+    provider: session.provider,
+    reason,
+    title: `${providerLabel} backend stopped unexpectedly`,
+    description: interruptedTurn
+      ? "The backend stopped before the active turn finished. Restart the session or send again when ready."
+      : "The backend stopped unexpectedly. Restart the session or send again when ready.",
   };
 }
 

@@ -420,6 +420,31 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("preserves session.exited reasons on stopped sessions", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      payload: {
+        reason: "codex app-server exited (code=null, signal=SIGBUS).",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "stopped" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "codex app-server exited (code=null, signal=SIGBUS).",
+    );
+    expect(thread.session?.status).toBe("stopped");
+    expect(thread.session?.lastError).toBe("codex app-server exited (code=null, signal=SIGBUS).");
+  });
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

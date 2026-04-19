@@ -355,7 +355,9 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
+    expect(thread?.session?.status).toBe("running");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(thread?.session?.lastError).toBeNull();
   });
 
   it("generates a thread title on the first turn", async () => {

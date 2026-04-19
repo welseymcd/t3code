@@ -229,6 +229,30 @@ const make = Effect.gen(function* () {
       createdAt: input.createdAt,
     });
 
+  const markThreadSessionRunningForTurnStart = Effect.fn("markThreadSessionRunningForTurnStart")(
+    function* (input: { readonly threadId: ThreadId; readonly createdAt: string }) {
+      const thread = yield* resolveThread(input.threadId);
+      const session = thread?.session;
+      if (!session) {
+        return;
+      }
+      if (session.status === "running" && session.lastError === null) {
+        return;
+      }
+      yield* setThreadSession({
+        threadId: input.threadId,
+        session: {
+          ...session,
+          status: "running",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: input.createdAt,
+        },
+        createdAt: input.createdAt,
+      });
+    },
+  );
+
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly detail: string;
@@ -415,6 +439,10 @@ const make = Effect.gen(function* () {
       input.createdAt,
       input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
     );
+    yield* markThreadSessionRunningForTurnStart({
+      threadId: input.threadId,
+      createdAt: input.createdAt,
+    });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }

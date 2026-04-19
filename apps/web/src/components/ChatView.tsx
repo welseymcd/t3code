@@ -142,6 +142,7 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import { ProviderSessionFailureBanner } from "./chat/ProviderSessionFailureBanner";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { FileExplorerSidebar } from "./FileExplorerSidebar";
@@ -160,6 +161,7 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
+  resolveProviderSessionFailure,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
@@ -843,6 +845,14 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [activeThreadKey, existingOpenTerminalThreadKeys, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
+  const providerSessionFailure = useMemo(
+    () =>
+      resolveProviderSessionFailure({
+        session: activeThread?.session ?? null,
+        latestTurn: activeLatestTurn,
+      }),
+    [activeLatestTurn, activeThread?.session],
+  );
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
@@ -3397,8 +3407,9 @@ export default function ChatView(props: ChatViewProps) {
 
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
+      <ProviderSessionFailureBanner failure={providerSessionFailure} />
       <ThreadErrorBanner
-        error={activeThread.error}
+        error={providerSessionFailure ? null : activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}

@@ -11,6 +11,7 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  resolveProviderSessionFailure,
   resolveSendEnvMode,
   shouldAutoRecoverDeletedWorktree,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -81,6 +82,69 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("resolveProviderSessionFailure", () => {
+  it("returns crash copy for unexpected backend exits", () => {
+    expect(
+      resolveProviderSessionFailure({
+        session: {
+          provider: "codex",
+          status: "closed",
+          orchestrationStatus: "stopped",
+          createdAt: "2026-04-19T18:00:00.000Z",
+          updatedAt: "2026-04-19T18:00:10.000Z",
+          lastError: "codex app-server exited (code=null, signal=SIGBUS).",
+        },
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          requestedAt: "2026-04-19T18:00:00.000Z",
+          startedAt: "2026-04-19T18:00:01.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      }),
+    ).toEqual({
+      provider: "codex",
+      reason: "codex app-server exited (code=null, signal=SIGBUS).",
+      title: "Codex backend stopped unexpectedly",
+      description:
+        "The backend stopped before the active turn finished. Restart the session or send again when ready.",
+    });
+  });
+
+  it("ignores graceful session stops", () => {
+    expect(
+      resolveProviderSessionFailure({
+        session: {
+          provider: "codex",
+          status: "closed",
+          orchestrationStatus: "stopped",
+          createdAt: "2026-04-19T18:00:00.000Z",
+          updatedAt: "2026-04-19T18:00:10.000Z",
+          lastError: "Session stopped",
+        },
+        latestTurn: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores non-provider validation errors", () => {
+    expect(
+      resolveProviderSessionFailure({
+        session: {
+          provider: "codex",
+          status: "error",
+          orchestrationStatus: "error",
+          createdAt: "2026-04-19T18:00:00.000Z",
+          updatedAt: "2026-04-19T18:00:10.000Z",
+          lastError: "Select a base branch before sending in New worktree mode.",
+        },
+        latestTurn: null,
+      }),
+    ).toBeNull();
   });
 });
 
