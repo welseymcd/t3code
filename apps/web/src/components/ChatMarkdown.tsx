@@ -22,7 +22,7 @@ import remarkGfm from "remark-gfm";
 import { useOpenWorkspaceFile } from "../hooks/useOpenWorkspaceFile";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -354,21 +354,25 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       workspaceRoot,
       targetPath,
     }).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open file",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open file",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     });
   }, [environmentId, openWorkspaceFile, targetPath, workspaceRoot]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-      toastManager.add({
-        type: "error",
-        title: `Failed to copy ${title.toLowerCase()}`,
-        description: "Clipboard API unavailable.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Failed to copy ${title.toLowerCase()}`,
+          description: "Clipboard API unavailable.",
+        }),
+      );
       return;
     }
 
@@ -381,11 +385,13 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         });
       },
       (error) => {
-        toastManager.add({
-          type: "error",
-          title: `Failed to copy ${title.toLowerCase()}`,
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Failed to copy ${title.toLowerCase()}`,
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       },
     );
   }, []);

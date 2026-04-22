@@ -42,7 +42,7 @@ import {
   ComboboxStatus,
   ComboboxTrigger,
 } from "./ui/combobox";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 interface BranchToolbarBranchSelectorProps {
   environmentId: EnvironmentId;
@@ -356,11 +356,13 @@ export function BranchToolbarBranchSelector({
         setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
       } catch (error) {
         setOptimisticBranch(previousBranch);
-        toastManager.add({
-          type: "error",
-          title: "Failed to checkout branch.",
-          description: toBranchActionErrorMessage(error),
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to checkout branch.",
+            description: toBranchActionErrorMessage(error),
+          }),
+        );
       }
     });
   };
@@ -386,11 +388,13 @@ export function BranchToolbarBranchSelector({
         setThreadBranch(createBranchResult.branch, activeWorktreePath);
       } catch (error) {
         setOptimisticBranch(previousBranch);
-        toastManager.add({
-          type: "error",
-          title: "Failed to create and checkout branch.",
-          description: toBranchActionErrorMessage(error),
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to create and checkout branch.",
+            description: toBranchActionErrorMessage(error),
+          }),
+        );
       }
     });
   };
