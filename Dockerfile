@@ -35,11 +35,17 @@ ARG CODEX_CLI_VERSION=0.124.0
 ARG OPENCODE_CLI_VERSION=1.14.23
 
 ENV NODE_ENV=production \
+  HOME=/data/home \
   T3CODE_MODE=web \
   T3CODE_HOST=0.0.0.0 \
   T3CODE_PORT=3773 \
   T3CODE_NO_BROWSER=true \
-  T3CODE_HOME=/data
+  T3CODE_HOME=/data \
+  CODEX_HOME=/data/home/.codex \
+  GH_CONFIG_DIR=/data/home/.config/gh \
+  OPENCODE_CONFIG_DIR=/data/home/.config/opencode \
+  XDG_CONFIG_HOME=/data/home/.config \
+  XDG_DATA_HOME=/data/home/.local/share
 
 WORKDIR /app
 
@@ -67,7 +73,7 @@ RUN apt-get update \
 COPY --from=build /app ./
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p /data \
+RUN mkdir -p /data/home/.config/gh /data/home/.config/opencode /data/home/.codex /data/home/.local/share/opencode \
   && chmod +x /usr/local/bin/docker-entrypoint.sh \
   && chown -R bun:bun /app /data
 
@@ -75,5 +81,6 @@ EXPOSE 3773
 VOLUME ["/data"]
 
 # Provider CLIs bundled in this image: `codex` and `opencode`.
+# Their auth/config paths, plus GitHub CLI auth, are rooted under the `/data` volume.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["bun", "apps/server/dist/bin.mjs", "serve", "--host", "0.0.0.0", "--port", "3773", "--no-browser"]
