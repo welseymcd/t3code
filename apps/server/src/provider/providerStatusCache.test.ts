@@ -1,16 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ServerProvider } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
-import { vi } from "vitest";
 
 import {
   hydrateCachedProvider,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
-  resolveProviderStatusCacheTempPath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
+
+const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 
 const makeProvider = (
   provider: ServerProvider["provider"],
@@ -75,20 +76,6 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
-  it("generates unique temp paths even when writes share the same millisecond", () => {
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_776_471_759_080);
-
-    try {
-      const filePath = "/tmp/provider-cache/claudeAgent.json";
-      const first = resolveProviderStatusCacheTempPath(filePath);
-      const second = resolveProviderStatusCacheTempPath(filePath);
-
-      assert.notStrictEqual(first, second);
-    } finally {
-      nowSpy.mockRestore();
-    }
-  });
-
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider("codex", {
       checkedAt: "2026-04-10T12:00:00.000Z",
@@ -97,13 +84,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
           slug: "gpt-5-mini",
           name: "GPT-5 Mini",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: emptyCapabilities,
         },
       ],
       message: "Cached message",
@@ -122,13 +103,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
           slug: "gpt-5.4",
           name: "GPT-5.4",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: emptyCapabilities,
         },
       ],
       message: "Pending refresh",
@@ -147,13 +122,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
             slug: "gpt-5-mini",
             name: "GPT-5 Mini",
             isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [],
-              supportsFastMode: false,
-              supportsThinkingToggle: false,
-              contextWindowOptions: [],
-              promptInjectedEffortLevels: [],
-            },
+            capabilities: emptyCapabilities,
           },
         ],
         installed: cachedCodex.installed,

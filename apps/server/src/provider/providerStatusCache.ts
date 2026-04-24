@@ -1,7 +1,8 @@
-import * as Crypto from "node:crypto";
 import * as nodePath from "node:path";
 import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@t3tools/contracts";
-import { Cause, Effect, FileSystem, Path, Schema } from "effect";
+import { Cause, Effect, FileSystem, Schema } from "effect";
+
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 
 export const PROVIDER_CACHE_IDS = [
   "codex",
@@ -68,9 +69,6 @@ export const resolveProviderStatusCachePath = (input: {
   readonly provider: ServerProvider["provider"];
 }) => nodePath.join(input.cacheDir, `${input.provider}.json`);
 
-export const resolveProviderStatusCacheTempPath = (filePath: string): string =>
-  `${filePath}.${process.pid}.${Date.now()}.${Crypto.randomUUID()}.tmp`;
-
 export const readProviderStatusCache = (filePath: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -100,22 +98,8 @@ export const readProviderStatusCache = (filePath: string) =>
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
-}) => {
-  const tempPath = resolveProviderStatusCacheTempPath(input.filePath);
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const encoded = `${JSON.stringify(input.provider, null, 2)}\n`;
-
-    yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
-    yield* fs.writeFileString(tempPath, encoded);
-    yield* fs.rename(tempPath, input.filePath);
-  }).pipe(
-    Effect.ensuring(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }));
-      }),
-    ),
-  );
-};
+}) =>
+  writeFileStringAtomically({
+    filePath: input.filePath,
+    contents: `${JSON.stringify(input.provider, null, 2)}\n`,
+  });
