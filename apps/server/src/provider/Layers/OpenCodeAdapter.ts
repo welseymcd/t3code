@@ -1289,7 +1289,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             ...buildEventBase({ threadId }),
             type: "session.exited",
             payload: {
-              reason: "Session stopped.",
+              reason: "Session closed.",
               recoverable: false,
               exitKind: "graceful",
             },

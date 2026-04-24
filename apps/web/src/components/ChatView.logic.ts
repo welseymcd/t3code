@@ -237,14 +237,6 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
-export function isSessionStoppedError(reason: string | null | undefined): boolean {
-  return reason?.trim().toLowerCase() === "session stopped";
-}
-
-function isGracefulProviderStop(reason: string): boolean {
-  return isSessionStoppedError(reason);
-}
-
 function isUnexpectedProviderExit(reason: string): boolean {
   const normalized = reason.toLowerCase();
   return (
@@ -265,9 +257,6 @@ export function resolveProviderSessionFailure(input: {
   const session = input.session;
   const reason = session?.lastError?.trim();
   if (!session || !reason) {
-    return null;
-  }
-  if (isGracefulProviderStop(reason)) {
     return null;
   }
   if (session.orchestrationStatus !== "stopped" && session.orchestrationStatus !== "error") {

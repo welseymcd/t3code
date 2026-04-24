@@ -2407,7 +2407,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context.pendingApprovals.clear();
 
     if (context.turnState) {
-      yield* completeTurn(context, "interrupted", "Session stopped.");
+      yield* completeTurn(context, "interrupted", "Session closed.");
     }
 
     yield* Queue.shutdown(context.promptQueue);
@@ -2442,7 +2442,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         createdAt: stamp.createdAt,
         threadId: context.session.threadId,
         payload: {
-          reason: "Session stopped",
+          reason: "Session closed",
           exitKind: "graceful",
         },
         providerRefs: {},
