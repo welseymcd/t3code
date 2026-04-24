@@ -52,8 +52,7 @@ export interface WorkspaceEntriesShape {
   ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntriesBrowseError>;
 
   /**
-   * List the immediate children for a workspace directory using the cached
-   * workspace index.
+   * List the immediate children for a workspace directory from the filesystem.
    */
   readonly listDirectory: (
     input: ProjectListDirectoryInput,

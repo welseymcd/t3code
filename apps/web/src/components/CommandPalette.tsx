@@ -16,6 +16,7 @@ import {
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
+  GithubIcon,
   MessageSquareIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -225,6 +226,10 @@ function OpenCommandPaletteDialog() {
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
+  const [cloneProjectEnvironmentId, setCloneProjectEnvironmentId] = useState<EnvironmentId | null>(
+    null,
+  );
+  const [isCloningProject, setIsCloningProject] = useState(false);
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryEnvironmentLabel = readPrimaryEnvironmentDescriptor()?.label ?? null;
@@ -282,6 +287,8 @@ function OpenCommandPaletteDialog() {
   ]);
   const defaultAddProjectEnvironmentId = addProjectEnvironmentOptions[0]?.environmentId ?? null;
   const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
+  const cloneEnvironmentId = cloneProjectEnvironmentId;
+  const isCloneProjectMode = cloneEnvironmentId !== null;
   const browseEnvironmentPlatform = useMemo(() => {
     const os =
       browseEnvironmentId && primaryEnvironmentId && browseEnvironmentId === primaryEnvironmentId
@@ -294,7 +301,8 @@ function OpenCommandPaletteDialog() {
           : null;
     return getEnvironmentBrowsePlatform(os);
   }, [browseEnvironmentId, primaryEnvironmentId, savedEnvironmentRuntimeById]);
-  const isBrowsing = isFilesystemBrowseQuery(query, browseEnvironmentPlatform);
+  const isBrowsing =
+    !isCloneProjectMode && isFilesystemBrowseQuery(query, browseEnvironmentPlatform);
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
   const getAddProjectInitialQueryForEnvironment = useCallback(
     (environmentId: EnvironmentId | null): string => {
@@ -309,6 +317,18 @@ function OpenCommandPaletteDialog() {
         return "~/";
       }
       return ensureBrowseDirectoryPath(baseDirectory);
+    },
+    [primaryEnvironmentId, savedEnvironmentRuntimeById, settings],
+  );
+  const getProjectBaseDirectoryForEnvironment = useCallback(
+    (environmentId: EnvironmentId | null): string => {
+      const environmentSettings =
+        environmentId && primaryEnvironmentId && environmentId === primaryEnvironmentId
+          ? settings
+          : environmentId
+            ? savedEnvironmentRuntimeById[environmentId]?.serverConfig?.settings
+            : null;
+      return environmentSettings?.addProjectBaseDirectory?.trim() || "~/";
     },
     [primaryEnvironmentId, savedEnvironmentRuntimeById, settings],
   );
@@ -542,6 +562,7 @@ function OpenCommandPaletteDialog() {
   function popView(): void {
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
+      setCloneProjectEnvironmentId(null);
     }
     setViewStack((previousViews) => previousViews.slice(0, -1));
     setHighlightedItemValue(null);
@@ -568,6 +589,16 @@ function OpenCommandPaletteDialog() {
     [getAddProjectInitialQueryForEnvironment],
   );
 
+  const startCloneProject = useCallback((environmentId: EnvironmentId): void => {
+    setCloneProjectEnvironmentId(environmentId);
+    setAddProjectEnvironmentId(null);
+    pushPaletteView({
+      addonIcon: <GithubIcon className={ADDON_ICON_CLASS} />,
+      groups: [],
+      initialQuery: "",
+    });
+  }, []);
+
   const addProjectEnvironmentItems: CommandPaletteActionItem[] = addProjectEnvironmentOptions.map(
     (option) => ({
       kind: "action",
@@ -582,6 +613,20 @@ function OpenCommandPaletteDialog() {
       },
     }),
   );
+  const cloneProjectEnvironmentItems: CommandPaletteActionItem[] = addProjectEnvironmentOptions.map(
+    (option) => ({
+      kind: "action",
+      value: `action:clone-project:environment:${option.environmentId}`,
+      searchTerms: [option.label, option.environmentId, "github", "clone", "private repo"],
+      title: option.label,
+      description: option.isPrimary ? "This device" : option.environmentId,
+      icon: <GithubIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        startCloneProject(option.environmentId);
+      },
+    }),
+  );
 
   const addProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(
     () => [
@@ -593,6 +638,46 @@ function OpenCommandPaletteDialog() {
     ],
     [addProjectEnvironmentItems],
   );
+
+  const cloneProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(
+    () => [
+      {
+        value: "environments",
+        label: "Clone into environment",
+        items: cloneProjectEnvironmentItems,
+      },
+    ],
+    [cloneProjectEnvironmentItems],
+  );
+
+  const openCloneProjectFlow = useCallback(() => {
+    if (addProjectEnvironmentOptions.length > 1) {
+      pushPaletteView({
+        addonIcon: <GithubIcon className={ADDON_ICON_CLASS} />,
+        groups: cloneProjectEnvironmentGroups,
+      });
+      return;
+    }
+
+    const environmentId = defaultAddProjectEnvironmentId;
+    if (!environmentId) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to clone repository",
+          description: "No environment is available.",
+        }),
+      );
+      return;
+    }
+
+    startCloneProject(environmentId);
+  }, [
+    addProjectEnvironmentOptions.length,
+    cloneProjectEnvironmentGroups,
+    defaultAddProjectEnvironmentId,
+    startCloneProject,
+  ]);
 
   const openAddProjectFlow = useCallback(() => {
     if (addProjectEnvironmentOptions.length > 1) {
@@ -707,6 +792,18 @@ function OpenCommandPaletteDialog() {
       await navigate({ to: "/settings" });
     },
   });
+  actionItems.push({
+    kind: "action",
+    value: "action:clone-github-project",
+    searchTerms: ["clone", "github", "private repo", "repository", "add project"],
+    title: "Clone GitHub repository",
+    description: "Clone a private or public repo and add it as a project",
+    icon: <GithubIcon className={ITEM_ICON_CLASS} />,
+    keepOpen: true,
+    run: async () => {
+      openCloneProjectFlow();
+    },
+  });
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   const activeGroups = currentView ? currentView.groups : rootGroups;
@@ -819,6 +916,68 @@ function OpenCommandPaletteDialog() {
     ],
   );
 
+  const handleCloneProject = useCallback(async () => {
+    if (!cloneEnvironmentId || isCloningProject) return;
+    const api = readEnvironmentApi(cloneEnvironmentId);
+    if (!api) return;
+
+    const repository = query.trim();
+    if (repository.length === 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Repository is required",
+          description: "Enter a GitHub repo such as owner/name or a GitHub URL.",
+        }),
+      );
+      return;
+    }
+
+    const parentDirectory = getProjectBaseDirectoryForEnvironment(cloneEnvironmentId);
+    setIsCloningProject(true);
+    try {
+      const clone = await api.git.cloneRepository({
+        repository,
+        parentDirectory,
+      });
+      const projectId = newProjectId();
+      await api.orchestration.dispatchCommand({
+        type: "project.create",
+        commandId: newCommandId(),
+        projectId,
+        title: inferProjectTitleFromPath(clone.workspaceRoot),
+        workspaceRoot: clone.workspaceRoot,
+        defaultModelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        createdAt: new Date().toISOString(),
+      });
+      await handleNewThread(scopeProjectRef(cloneEnvironmentId, projectId), {
+        envMode: settings.defaultThreadEnvMode,
+      }).catch(() => undefined);
+      setOpen(false);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to clone repository",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setIsCloningProject(false);
+    }
+  }, [
+    cloneEnvironmentId,
+    getProjectBaseDirectoryForEnvironment,
+    handleNewThread,
+    isCloningProject,
+    query,
+    setOpen,
+    settings.defaultThreadEnvMode,
+  ]);
+
   function browseTo(name: string): void {
     const nextQuery = appendBrowsePathSegment(query, name);
     setHighlightedItemValue(null);
@@ -863,7 +1022,9 @@ function OpenCommandPaletteDialog() {
     displayedGroups = relativePathNeedsActiveProject ? [] : browseGroups;
   }
 
-  const inputPlaceholder = getCommandPaletteInputPlaceholder(paletteMode);
+  const inputPlaceholder = isCloneProjectMode
+    ? "owner/repo or https://github.com/owner/repo"
+    : getCommandPaletteInputPlaceholder(paletteMode);
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
   const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
   const canSubmitBrowsePath = isBrowsing && !relativePathNeedsActiveProject;
@@ -918,6 +1079,12 @@ function OpenCommandPaletteDialog() {
       canSubmitBrowsePath &&
       event.key === "Enter" &&
       (!hasHighlightedBrowseItem || isPrimaryModifierPressed(event));
+
+    if (isCloneProjectMode && event.key === "Enter") {
+      event.preventDefault();
+      void handleCloneProject();
+      return;
+    }
 
     if (shouldSubmitBrowsePath) {
       event.preventDefault();
@@ -1007,7 +1174,15 @@ function OpenCommandPaletteDialog() {
       >
         <div className="relative">
           <CommandInput
-            className={isBrowsing ? (willCreateProjectPath ? "pe-36" : "pe-16") : undefined}
+            className={
+              isCloneProjectMode
+                ? "pe-24"
+                : isBrowsing
+                  ? willCreateProjectPath
+                    ? "pe-36"
+                    : "pe-16"
+                  : undefined
+            }
             placeholder={inputPlaceholder}
             wrapperClassName={
               isSubmenu ? "[&_[data-slot=autocomplete-start-addon]]:pointer-events-auto" : undefined
@@ -1032,7 +1207,27 @@ function OpenCommandPaletteDialog() {
                 : {})}
             onKeyDown={handleKeyDown}
           />
-          {isBrowsing ? (
+          {isCloneProjectMode ? (
+            <Button
+              variant="outline"
+              size="xs"
+              tabIndex={-1}
+              className="absolute end-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+              aria-label="Clone GitHub repository"
+              disabled={isCloningProject || query.trim().length === 0}
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+              onClick={() => {
+                void handleCloneProject();
+              }}
+            >
+              <span>{isCloningProject ? "Cloning" : "Clone"}</span>
+              <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+                <Kbd>Enter</Kbd>
+              </KbdGroup>
+            </Button>
+          ) : isBrowsing ? (
             <Button
               variant="outline"
               size="xs"
@@ -1074,7 +1269,12 @@ function OpenCommandPaletteDialog() {
                 ? {
                     emptyStateMessage: "Press Enter to create this folder and add it as a project.",
                   }
-                : {})}
+                : isCloneProjectMode
+                  ? {
+                      emptyStateMessage:
+                        "Enter a GitHub repository. Private repos use your authenticated GitHub CLI session.",
+                    }
+                  : {})}
           />
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">

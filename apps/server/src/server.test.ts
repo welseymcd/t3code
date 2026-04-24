@@ -58,6 +58,7 @@ import {
   type CheckpointDiffQueryShape,
 } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
+import { GitHubCli, type GitHubCliShape } from "./git/Services/GitHubCli.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcasterLive } from "./git/Layers/GitStatusBroadcaster.ts";
 import {
@@ -314,6 +315,7 @@ const buildAppUnderTest = (options?: {
     serverSettings?: Partial<ServerSettingsShape>;
     open?: Partial<OpenShape>;
     gitCore?: Partial<GitCoreShape>;
+    gitHubCli?: Partial<GitHubCliShape>;
     gitManager?: Partial<GitManagerShape>;
     gitStatusBroadcaster?: Partial<GitStatusBroadcasterShape>;
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
@@ -374,6 +376,14 @@ const buildAppUnderTest = (options?: {
     const gitManagerLayer = Layer.mock(GitManager)({
       ...options?.layers?.gitManager,
     });
+    const gitHubCliLayer = Layer.mock(GitHubCli)({
+      cloneRepository: (input) =>
+        Effect.succeed({
+          workspaceRoot: `${input.parentDirectory.replace(/[\\/]+$/, "")}/${input.directoryName ?? "repo"}`,
+          repository: input.repository,
+        }),
+      ...options?.layers?.gitHubCli,
+    });
     const workspaceEntriesLayer = WorkspaceEntriesLive.pipe(
       Layer.provide(WorkspacePathsLive),
       Layer.provideMerge(gitCoreLayer),
@@ -431,6 +441,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(gitCoreLayer),
+      Layer.provide(gitHubCliLayer),
       Layer.provide(gitManagerLayer),
       Layer.provideMerge(gitStatusBroadcasterLayer),
       Layer.provide(

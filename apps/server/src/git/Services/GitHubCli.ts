@@ -9,7 +9,11 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProcessRunResult } from "../../processRunner.ts";
-import type { GitHubCliError } from "@t3tools/contracts";
+import type {
+  GitCloneRepositoryInput,
+  GitCloneRepositoryResult,
+  GitHubCliError,
+} from "@t3tools/contracts";
 
 export interface GitHubPullRequestSummary {
   readonly number: number;
@@ -66,6 +70,13 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly repository: string;
   }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+  /**
+   * Clone a GitHub repository using the authenticated GitHub CLI.
+   */
+  readonly cloneRepository: (
+    input: GitCloneRepositoryInput,
+  ) => Effect.Effect<GitCloneRepositoryResult, GitHubCliError>;
 
   /**
    * Create a pull request from branch context and body file.

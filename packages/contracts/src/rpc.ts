@@ -13,6 +13,8 @@ import {
   GitActionProgressEvent,
   GitCheckoutInput,
   GitCheckoutResult,
+  GitCloneRepositoryInput,
+  GitCloneRepositoryResult,
   GitCommandError,
   GitCreateBranchInput,
   GitCreateBranchResult,
@@ -108,6 +110,7 @@ export const WS_METHODS = {
   gitRemoveWorktree: "git.removeWorktree",
   gitCreateBranch: "git.createBranch",
   gitCheckout: "git.checkout",
+  gitCloneRepository: "git.cloneRepository",
   gitInit: "git.init",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
@@ -266,6 +269,12 @@ export const WsGitCheckoutRpc = Rpc.make(WS_METHODS.gitCheckout, {
   error: GitCommandError,
 });
 
+export const WsGitCloneRepositoryRpc = Rpc.make(WS_METHODS.gitCloneRepository, {
+  payload: GitCloneRepositoryInput,
+  success: GitCloneRepositoryResult,
+  error: GitManagerServiceError,
+});
+
 export const WsGitInitRpc = Rpc.make(WS_METHODS.gitInit, {
   payload: GitInitInput,
   error: GitCommandError,
@@ -398,6 +407,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRemoveWorktreeRpc,
   WsGitCreateBranchRpc,
   WsGitCheckoutRpc,
+  WsGitCloneRepositoryRpc,
   WsGitInitRpc,
   WsTerminalOpenRpc,
   WsTerminalWriteRpc,

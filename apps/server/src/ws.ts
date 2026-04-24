@@ -32,6 +32,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
+import { GitHubCli } from "./git/Services/GitHubCli.ts";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings } from "./keybindings.ts";
@@ -140,6 +141,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const open = yield* Open;
       const gitManager = yield* GitManager;
       const git = yield* GitCore;
+      const gitHubCli = yield* GitHubCli;
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
@@ -913,6 +915,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
           ),
+        [WS_METHODS.gitCloneRepository]: (input) =>
+          observeRpcEffect(WS_METHODS.gitCloneRepository, gitHubCli.cloneRepository(input), {
+            "rpc.aggregate": "git",
+          }),
         [WS_METHODS.gitListBranches]: (input) =>
           observeRpcEffect(WS_METHODS.gitListBranches, git.listBranches(input), {
             "rpc.aggregate": "git",

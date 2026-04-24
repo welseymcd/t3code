@@ -1,6 +1,8 @@
 import type {
   GitCheckoutInput,
   GitCheckoutResult,
+  GitCloneRepositoryInput,
+  GitCloneRepositoryResult,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -260,6 +262,7 @@ export interface EnvironmentApi {
     removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
     createBranch: (input: GitCreateBranchInput) => Promise<GitCreateBranchResult>;
     checkout: (input: GitCheckoutInput) => Promise<GitCheckoutResult>;
+    cloneRepository: (input: GitCloneRepositoryInput) => Promise<GitCloneRepositoryResult>;
     init: (input: GitInitInput) => Promise<void>;
     resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
     preparePullRequestThread: (

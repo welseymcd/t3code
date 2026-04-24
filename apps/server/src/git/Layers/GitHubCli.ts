@@ -1,3 +1,5 @@
+import * as NodeOs from "node:os";
+import * as NodePath from "node:path";
 import { Effect, Layer, Result, Schema, SchemaIssue } from "effect";
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 
@@ -15,6 +17,7 @@ import {
 } from "../githubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const CLONE_TIMEOUT_MS = 10 * 60_000;
 
 function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
   if (error instanceof Error) {
@@ -81,6 +84,34 @@ function normalizeRepositoryCloneUrls(
     url: raw.url,
     sshUrl: raw.sshUrl,
   };
+}
+
+function inferCloneDirectoryName(repository: string): string {
+  const trimmed = repository.trim().replace(/[\\/]$/, "");
+  const lastSegment = trimmed.split(/[/:]/).at(-1) ?? "repository";
+  const withoutGitSuffix = lastSegment.replace(/\.git$/i, "");
+  return withoutGitSuffix.trim() || "repository";
+}
+
+function normalizeCloneDirectoryName(
+  directoryName: string | undefined,
+  repository: string,
+): string {
+  const normalized = (directoryName?.trim() || inferCloneDirectoryName(repository)).replace(
+    /[\\/]+/g,
+    "-",
+  );
+  return normalized.length > 0 ? normalized : "repository";
+}
+
+function expandHomePath(input: string): string {
+  if (input === "~") {
+    return NodeOs.homedir();
+  }
+  if (input.startsWith("~/") || input.startsWith("~\\")) {
+    return NodePath.join(NodeOs.homedir(), input.slice(2));
+  }
+  return input;
 }
 
 function decodeGitHubJson<S extends Schema.Top>(
@@ -201,6 +232,20 @@ const makeGitHubCli = Effect.sync(() => {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    cloneRepository: (input) => {
+      const directoryName = normalizeCloneDirectoryName(input.directoryName, input.repository);
+      const parentDirectory = expandHomePath(input.parentDirectory);
+      return execute({
+        cwd: parentDirectory,
+        args: ["repo", "clone", input.repository, directoryName],
+        timeoutMs: CLONE_TIMEOUT_MS,
+      }).pipe(
+        Effect.as({
+          workspaceRoot: NodePath.resolve(parentDirectory, directoryName),
+          repository: input.repository,
+        }),
+      );
+    },
     createPullRequest: (input) =>
       execute({
         cwd: input.cwd,

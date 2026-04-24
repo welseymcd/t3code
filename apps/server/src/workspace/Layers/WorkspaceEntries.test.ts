@@ -68,6 +68,12 @@ const searchWorkspaceEntries = (input: { cwd: string; query: string; limit: numb
     return yield* workspaceEntries.search(input);
   });
 
+const listWorkspaceDirectory = (input: { cwd: string; parentPath?: string; limit?: number }) =>
+  Effect.gen(function* () {
+    const workspaceEntries = yield* WorkspaceEntries;
+    return yield* workspaceEntries.listDirectory(input);
+  });
+
 const appendSeparator = (input: string) =>
   input.endsWith("/") || input.endsWith("\\")
     ? input
@@ -358,6 +364,52 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           .pipe(Effect.flip);
 
         expect(error.detail).toBe("Relative filesystem browse paths require a current project.");
+      }),
+    );
+  });
+
+  describe("listDirectory", () => {
+    it.effect("returns ignored and hidden entries directly from the filesystem", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-all-", git: true });
+        yield* writeTextFile(cwd, ".gitignore", ".env\nnode_modules/\ndist/\n");
+        yield* writeTextFile(cwd, ".env", "SECRET=value\n");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js", "");
+        yield* writeTextFile(cwd, "dist/index.js", "");
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+
+        const result = yield* listWorkspaceDirectory({ cwd, limit: 100 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain(".git");
+        expect(paths).toContain("dist");
+        expect(paths).toContain("node_modules");
+        expect(paths).toContain("src");
+        expect(paths).toContain(".env");
+        expect(paths).toContain(".gitignore");
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("lists ignored children under an expanded directory", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-children-", git: true });
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js", "");
+
+        const result = yield* listWorkspaceDirectory({
+          cwd,
+          parentPath: "node_modules/pkg",
+          limit: 100,
+        });
+
+        expect(result.entries).toEqual([
+          {
+            path: "node_modules/pkg/index.js",
+            kind: "file",
+            parentPath: "node_modules/pkg",
+          },
+        ]);
       }),
     );
   });

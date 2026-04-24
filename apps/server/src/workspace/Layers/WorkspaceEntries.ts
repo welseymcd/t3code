@@ -498,6 +498,60 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const listDirectoryFromFilesystem = Effect.fn("WorkspaceEntries.listDirectoryFromFilesystem")(
+    function* (input: {
+      readonly cwd: string;
+      readonly parentPath: string | undefined;
+      readonly limit: number;
+    }): Effect.fn.Return<
+      { readonly entries: ProjectEntry[]; readonly truncated: boolean },
+      WorkspaceEntriesError
+    > {
+      const absoluteDirectory = input.parentPath
+        ? path.join(input.cwd, input.parentPath)
+        : input.cwd;
+      const dirents = yield* Effect.tryPromise({
+        try: () => fsPromises.readdir(absoluteDirectory, { withFileTypes: true }),
+        catch: (cause) =>
+          new WorkspaceEntriesError({
+            cwd: input.cwd,
+            operation: "workspaceEntries.listDirectoryFromFilesystem",
+            detail: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
+
+      const entries = dirents
+        .filter((dirent) => dirent.name && dirent.name !== "." && dirent.name !== "..")
+        .flatMap((dirent): ProjectEntry[] => {
+          if (!dirent.isDirectory() && !dirent.isFile()) {
+            return [];
+          }
+          const relativePath = toPosixPath(
+            input.parentPath ? path.join(input.parentPath, dirent.name) : dirent.name,
+          );
+          return [
+            {
+              path: relativePath,
+              kind: dirent.isDirectory() ? "directory" : "file",
+              parentPath: input.parentPath,
+            },
+          ];
+        })
+        .toSorted((left, right) => {
+          if (left.kind !== right.kind) {
+            return left.kind === "directory" ? -1 : 1;
+          }
+          return left.path.localeCompare(right.path);
+        });
+
+      return {
+        entries: entries.slice(0, input.limit),
+        truncated: entries.length > input.limit,
+      };
+    },
+  );
+
   const listDirectory: WorkspaceEntriesShape["listDirectory"] = Effect.fn(
     "WorkspaceEntries.listDirectory",
   )(function* (input) {
@@ -521,31 +575,12 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
           )).relativePath
       : undefined;
 
-    return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
-      Effect.map((index) => {
-        const limit = Math.max(
-          1,
-          Math.floor(input.limit ?? WORKSPACE_LIST_DIRECTORY_DEFAULT_LIMIT),
-        );
-        const matchingEntries = index.entries
-          .filter((entry) =>
-            normalizedParentPath === undefined
-              ? entry.parentPath === undefined
-              : entry.parentPath === normalizedParentPath,
-          )
-          .toSorted((left, right) => {
-            if (left.kind !== right.kind) {
-              return left.kind === "directory" ? -1 : 1;
-            }
-            return left.path.localeCompare(right.path);
-          });
-
-        return {
-          entries: matchingEntries.slice(0, limit),
-          truncated: matchingEntries.length > limit,
-        };
-      }),
-    );
+    const limit = Math.max(1, Math.floor(input.limit ?? WORKSPACE_LIST_DIRECTORY_DEFAULT_LIMIT));
+    return yield* listDirectoryFromFilesystem({
+      cwd: normalizedCwd,
+      parentPath: normalizedParentPath,
+      limit,
+    });
   });
 
   return {

@@ -189,6 +189,13 @@ export const GitInitInput = Schema.Struct({
 });
 export type GitInitInput = typeof GitInitInput.Type;
 
+export const GitCloneRepositoryInput = Schema.Struct({
+  repository: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(512)),
+  parentDirectory: TrimmedNonEmptyStringSchema,
+  directoryName: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(255))),
+});
+export type GitCloneRepositoryInput = typeof GitCloneRepositoryInput.Type;
+
 // RPC Results
 
 const GitStatusPr = Schema.Struct({
@@ -283,6 +290,12 @@ export const GitCheckoutResult = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
 export type GitCheckoutResult = typeof GitCheckoutResult.Type;
+
+export const GitCloneRepositoryResult = Schema.Struct({
+  workspaceRoot: TrimmedNonEmptyStringSchema,
+  repository: TrimmedNonEmptyStringSchema,
+});
+export type GitCloneRepositoryResult = typeof GitCloneRepositoryResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,
