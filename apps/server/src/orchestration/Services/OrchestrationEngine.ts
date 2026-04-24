@@ -16,7 +16,7 @@ import type {
   OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { Context } from "effect";
-import type { Effect, Stream } from "effect";
+import type { Effect, Scope, Stream } from "effect";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
@@ -41,6 +41,16 @@ export interface OrchestrationEngineShape {
   readonly readEvents: (
     fromSequenceExclusive: number,
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError, never>;
+
+  /**
+   * Subscribe to the hot domain-event stream with the subscription acquired
+   * eagerly in the current scope.
+   */
+  readonly subscribeDomainEvents: () => Effect.Effect<
+    Stream.Stream<OrchestrationEvent>,
+    never,
+    Scope.Scope
+  >;
 
   /**
    * Dispatch a validated orchestration command.

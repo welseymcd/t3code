@@ -344,15 +344,40 @@ const commandOutputOptions = (verbose: boolean) =>
     stderr: "inherit",
   }) as const;
 
-const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Command) {
+interface RunCommandOptions {
+  readonly heartbeatLabel?: string;
+  readonly heartbeatIntervalMs?: number;
+}
+
+const runCommand = Effect.fn("runCommand")(function* (
+  command: ChildProcess.Command,
+  options?: RunCommandOptions,
+) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* commandSpawner.spawn(command);
-  const exitCode = yield* child.exitCode;
 
-  if (exitCode !== 0) {
-    return yield* new BuildScriptError({
-      message: `Command exited with non-zero exit code (${exitCode})`,
-    });
+  let heartbeat: NodeJS.Timeout | undefined;
+  if (options?.heartbeatLabel) {
+    const startedAt = Date.now();
+    const intervalMs = options.heartbeatIntervalMs ?? 15_000;
+    heartbeat = setInterval(() => {
+      const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
+      console.error(`[desktop-artifact] ${options.heartbeatLabel} (${elapsedSeconds}s elapsed)...`);
+    }, intervalMs);
+  }
+
+  try {
+    const exitCode = yield* child.exitCode;
+
+    if (exitCode !== 0) {
+      return yield* new BuildScriptError({
+        message: `Command exited with non-zero exit code (${exitCode})`,
+      });
+    }
+  } finally {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+    }
   }
 });
 
@@ -807,14 +832,17 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
+  yield* Effect.log("[desktop-artifact] Installing staged production dependencies with npm...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --production --omit optional`,
+    })`npm install --omit=dev --omit=optional`,
+    {
+      heartbeatLabel: "Still installing staged production dependencies",
+    },
   );
 
   const buildEnv: NodeJS.ProcessEnv = {

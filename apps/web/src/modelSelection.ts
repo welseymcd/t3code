@@ -65,13 +65,16 @@ export function getAppModelOptions(
   selectedModel?: string | null,
 ): AppModelOption[] {
   const options: AppModelOption[] = getProviderModels(providers, provider).map(
-    ({ slug, name, shortName, subProvider, isCustom }) => ({
-      slug,
-      name,
-      ...(shortName ? { shortName } : {}),
-      ...(subProvider ? { subProvider } : {}),
-      isCustom,
-    }),
+    ({ slug, name, shortName, subProvider, isCustom }) => {
+      const option: AppModelOption = { slug, name, isCustom };
+      if (shortName) {
+        option.shortName = shortName;
+      }
+      if (subProvider) {
+        option.subProvider = subProvider;
+      }
+      return option;
+    },
   );
   const seen = new Set(options.map((option) => option.slug));
   const trimmedSelectedModel = selectedModel?.trim().toLowerCase();

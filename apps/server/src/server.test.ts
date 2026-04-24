@@ -34,6 +34,7 @@ import {
   ManagedRuntime,
   Option,
   Path,
+  Queue,
   Stream,
 } from "effect";
 import {
@@ -192,16 +193,6 @@ const makeDefaultOrchestrationThreadShell = (
     ...overrides,
   };
 };
-
-const workspaceAndProjectServicesLayer = Layer.mergeAll(
-  WorkspacePathsLive,
-  WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive)),
-  WorkspaceFileSystemLive.pipe(
-    Layer.provide(WorkspacePathsLive),
-    Layer.provide(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
-  ),
-  ProjectFaviconResolverLive,
-);
 
 const browserOtlpTracingLayer = Layer.mergeAll(
   FetchHttpClient.layer,
@@ -457,6 +448,7 @@ const buildAppUnderTest = (options?: {
         Layer.mock(OrchestrationEngineService)({
           getReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           readEvents: () => Stream.empty,
+          subscribeDomainEvents: () => Effect.succeed(Stream.empty),
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
           ...options?.layers?.orchestrationEngine,
@@ -475,6 +467,7 @@ const buildAppUnderTest = (options?: {
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshotById: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -3056,6 +3049,230 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.deepEqual(replayResult, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers shell updates that arrive during subscription bootstrap", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationEvent>();
+      const subscribed = yield* Deferred.make<void>();
+      const now = new Date().toISOString();
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Deferred.await(subscribed).pipe(
+                Effect.andThen(
+                  Queue.offer(events, {
+                    sequence: 2,
+                    eventId: EventId.make("event-shell-2"),
+                    aggregateKind: "thread",
+                    aggregateId: defaultThreadId,
+                    commandId: null,
+                    causationEventId: null,
+                    correlationId: null,
+                    metadata: {},
+                    type: "thread.session-set",
+                    occurredAt: now,
+                    payload: {
+                      threadId: defaultThreadId,
+                      session: {
+                        threadId: defaultThreadId,
+                        status: "running",
+                        providerName: "codex",
+                        runtimeMode: "full-access",
+                        activeTurnId: null,
+                        lastError: null,
+                        updatedAt: now,
+                      },
+                    },
+                  }),
+                ),
+                Effect.as({
+                  snapshotSequence: 1,
+                  updatedAt: now,
+                  projects: [],
+                  threads: [],
+                }),
+              ),
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(
+                  makeDefaultOrchestrationThreadShell({
+                    id: defaultThreadId,
+                    updatedAt: now,
+                    session: {
+                      threadId: defaultThreadId,
+                      status: "running",
+                      providerName: "codex",
+                      runtimeMode: "full-access",
+                      activeTurnId: null,
+                      lastError: null,
+                      updatedAt: now,
+                    },
+                  }),
+                ),
+              ),
+          },
+          orchestrationEngine: {
+            subscribeDomainEvents: () =>
+              Deferred.succeed(subscribed, undefined).pipe(Effect.as(Stream.fromQueue(events))),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.map((chunk) => Array.from(chunk)),
+          ),
+        ),
+      );
+
+      assert.equal(items.length, 2);
+      assert.deepEqual(items[0], {
+        kind: "snapshot",
+        snapshot: {
+          snapshotSequence: 1,
+          updatedAt: now,
+          projects: [],
+          threads: [],
+        },
+      });
+      assert.equal(items[1]?.kind, "thread-upserted");
+      if (items[1]?.kind === "thread-upserted") {
+        assert.equal(items[1].sequence, 2);
+        assert.equal(items[1].thread.id, defaultThreadId);
+        assert.equal(items[1].thread.updatedAt, now);
+        assert.equal(items[1].thread.session?.status, "running");
+        assert.equal(items[1].thread.session?.providerName, "codex");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers thread detail updates that arrive during subscription bootstrap", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-bootstrap-detail");
+      const events = yield* Queue.unbounded<OrchestrationEvent>();
+      const subscribed = yield* Deferred.make<void>();
+      const now = new Date().toISOString();
+      const threadDetail = {
+        id: threadId,
+        projectId: defaultProjectId,
+        title: "Bootstrap detail thread",
+        modelSelection: defaultModelSelection,
+        interactionMode: "default" as const,
+        runtimeMode: "full-access" as const,
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestTurn: null,
+        messages: [],
+        session: null,
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        deletedAt: null,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshotById: (requestedThreadId) =>
+              Deferred.await(subscribed).pipe(
+                Effect.andThen(
+                  Queue.offer(events, {
+                    sequence: 2,
+                    eventId: EventId.make("event-thread-detail-2"),
+                    aggregateKind: "thread",
+                    aggregateId: requestedThreadId,
+                    commandId: null,
+                    causationEventId: null,
+                    correlationId: null,
+                    metadata: {},
+                    type: "thread.activity-appended",
+                    occurredAt: now,
+                    payload: {
+                      threadId: requestedThreadId,
+                      activity: {
+                        id: EventId.make("activity-1"),
+                        tone: "info",
+                        kind: "provider.status",
+                        summary: "Codex updated",
+                        payload: {},
+                        turnId: null,
+                        createdAt: now,
+                      },
+                    },
+                  }),
+                ),
+                Effect.as(
+                  Option.some({
+                    snapshotSequence: 1,
+                    thread: threadDetail,
+                  }),
+                ),
+              ),
+          },
+          orchestrationEngine: {
+            subscribeDomainEvents: () =>
+              Deferred.succeed(subscribed, undefined).pipe(Effect.as(Stream.fromQueue(events))),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({ threadId }).pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.map((chunk) => Array.from(chunk)),
+          ),
+        ),
+      );
+
+      assert.equal(items.length, 2);
+      assert.deepEqual(items[0], {
+        kind: "snapshot",
+        snapshot: {
+          snapshotSequence: 1,
+          thread: threadDetail,
+        },
+      });
+      assert.deepEqual(items[1], {
+        kind: "event",
+        event: {
+          sequence: 2,
+          eventId: EventId.make("event-thread-detail-2"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "thread.activity-appended",
+          occurredAt: now,
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-1"),
+              tone: "info",
+              kind: "provider.status",
+              summary: "Codex updated",
+              payload: {},
+              turnId: null,
+              createdAt: now,
+            },
+          },
+        },
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -668,6 +668,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
+              const liveDomainEvents = yield* orchestrationEngine.subscribeDomainEvents();
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.mapError(
                   (cause) =>
@@ -678,7 +679,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 ),
               );
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+              const liveStream = liveDomainEvents.pipe(
+                Stream.filter((event) => event.sequence > snapshot.snapshotSequence),
                 Stream.mapEffect(toShellStreamEvent),
                 Stream.flatMap((event) =>
                   Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
@@ -699,8 +701,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const [threadDetail, snapshotSequence] = yield* Effect.all([
-                projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
+              const liveDomainEvents = yield* orchestrationEngine.subscribeDomainEvents();
+              const threadDetailSnapshot = yield* projectionSnapshotQuery
+                .getThreadDetailSnapshotById(input.threadId)
+                .pipe(
                   Effect.mapError(
                     (cause) =>
                       new OrchestrationGetSnapshotError({
@@ -708,22 +712,19 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                         cause,
                       }),
                   ),
-                ),
-                orchestrationEngine
-                  .getReadModel()
-                  .pipe(Effect.map((readModel) => readModel.snapshotSequence)),
-              ]);
+                );
 
-              if (Option.isNone(threadDetail)) {
+              if (Option.isNone(threadDetailSnapshot)) {
                 return yield* new OrchestrationGetSnapshotError({
                   message: `Thread ${input.threadId} was not found`,
                   cause: input.threadId,
                 });
               }
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+              const liveStream = liveDomainEvents.pipe(
                 Stream.filter(
                   (event) =>
+                    event.sequence > threadDetailSnapshot.value.snapshotSequence &&
                     event.aggregateKind === "thread" &&
                     event.aggregateId === input.threadId &&
                     isThreadDetailEvent(event),
@@ -737,10 +738,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
-                  snapshot: {
-                    snapshotSequence,
-                    thread: threadDetail.value,
-                  },
+                  snapshot: threadDetailSnapshot.value,
                 }),
                 liveStream,
               );

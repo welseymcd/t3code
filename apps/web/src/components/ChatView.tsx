@@ -164,6 +164,7 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
+  isSessionStoppedError,
   resolveProviderSessionFailure,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
@@ -855,6 +856,9 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [activeLatestTurn, activeThread?.session],
   );
+  const sessionStoppedToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  const shouldShowSessionStoppedToast =
+    providerSessionFailure === null && isSessionStoppedError(activeThread?.error);
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
@@ -1666,17 +1670,62 @@ export default function ChatView(props: ChatViewProps) {
     [draftId, routeThreadRef, serverThread, setStoreThreadError],
   );
 
+  useEffect(() => {
+    if (!shouldShowSessionStoppedToast || !activeThread || !activeThreadRef) {
+      if (sessionStoppedToastIdRef.current !== null) {
+        toastManager.close(sessionStoppedToastIdRef.current);
+        sessionStoppedToastIdRef.current = null;
+      }
+      return;
+    }
+
+    const nextToast = {
+      title: "Session stopped",
+      description: "Send another message to start a new session for this thread.",
+      timeout: 0,
+      type: "warning" as const,
+      actionProps: {
+        children: "Dismiss",
+        onClick: () => setThreadError(activeThread.id, null),
+      },
+      data: {
+        actionVariant: "outline" as const,
+        hideCopyButton: true,
+        threadRef: activeThreadRef,
+      },
+    };
+
+    if (sessionStoppedToastIdRef.current !== null) {
+      toastManager.update(sessionStoppedToastIdRef.current, nextToast);
+      return;
+    }
+
+    sessionStoppedToastIdRef.current = toastManager.add(nextToast);
+  }, [activeThread, activeThreadRef, setThreadError, shouldShowSessionStoppedToast]);
+
+  useEffect(() => {
+    return () => {
+      if (sessionStoppedToastIdRef.current !== null) {
+        toastManager.close(sessionStoppedToastIdRef.current);
+        sessionStoppedToastIdRef.current = null;
+      }
+    };
+  }, []);
+
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
-  }, []);
+  }, [composerRef.current]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
     });
   }, [focusComposer]);
-  const addTerminalContextToDraft = useCallback((selection: TerminalContextSelection) => {
-    composerRef.current?.addTerminalContext(selection);
-  }, []);
+  const addTerminalContextToDraft = useCallback(
+    (selection: TerminalContextSelection) => {
+      composerRef.current?.addTerminalContext(selection);
+    },
+    [composerRef.current],
+  );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
       if (!activeThreadRef) return;
@@ -2459,6 +2508,7 @@ export default function ChatView(props: ChatViewProps) {
     keybindings,
     onToggleDiff,
     toggleTerminalVisibility,
+    composerRef.current,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -2933,7 +2983,7 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       composerRef.current?.resetCursorState({ cursor: 0 });
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput],
+    [activePendingProgress?.activeQuestion, activePendingUserInput, composerRef.current],
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
@@ -2967,7 +3017,7 @@ export default function ChatView(props: ChatViewProps) {
         composerRef.current?.focusAt(nextCursor);
       }
     },
-    [activePendingUserInput],
+    [activePendingUserInput, composerRef.current],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {
@@ -3139,6 +3189,7 @@ export default function ChatView(props: ChatViewProps) {
       setThreadError,
       autoOpenPlanSidebar,
       environmentId,
+      composerRef.current,
     ],
   );
 
@@ -3275,6 +3326,7 @@ export default function ChatView(props: ChatViewProps) {
     runtimeMode,
     autoOpenPlanSidebar,
     environmentId,
+    composerRef.current,
   ]);
 
   const onProviderModelSelect = useCallback(
@@ -3440,7 +3492,7 @@ export default function ChatView(props: ChatViewProps) {
       <ProviderStatusBanner status={activeProviderStatus} />
       <ProviderSessionFailureBanner failure={providerSessionFailure} />
       <ThreadErrorBanner
-        error={providerSessionFailure ? null : activeThread.error}
+        error={providerSessionFailure || shouldShowSessionStoppedToast ? null : activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}

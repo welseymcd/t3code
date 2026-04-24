@@ -36,6 +36,11 @@ export interface ProjectionThreadCheckpointContext {
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
 }
 
+export interface ProjectionThreadDetailSnapshot {
+  readonly snapshotSequence: number;
+  readonly thread: OrchestrationThread;
+}
+
 /**
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
@@ -105,6 +110,14 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active thread detail snapshot by id with the projection
+   * sequence it reflects.
+   */
+  readonly getThreadDetailSnapshotById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProjectionThreadDetailSnapshot>, ProjectionRepositoryError>;
 }
 
 /**

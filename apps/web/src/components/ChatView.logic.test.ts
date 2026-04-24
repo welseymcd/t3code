@@ -10,6 +10,7 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
+  isSessionStoppedError,
   reconcileMountedTerminalThreadIds,
   resolveProviderSessionFailure,
   resolveSendEnvMode,
@@ -145,6 +146,18 @@ describe("resolveProviderSessionFailure", () => {
         latestTurn: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("isSessionStoppedError", () => {
+  it("matches the canonical session stopped reason", () => {
+    expect(isSessionStoppedError("Session stopped")).toBe(true);
+    expect(isSessionStoppedError(" session stopped ")).toBe(true);
+  });
+
+  it("ignores other errors", () => {
+    expect(isSessionStoppedError(null)).toBe(false);
+    expect(isSessionStoppedError("Session exited unexpectedly")).toBe(false);
   });
 });
 

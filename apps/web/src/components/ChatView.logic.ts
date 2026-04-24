@@ -237,8 +237,12 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
+export function isSessionStoppedError(reason: string | null | undefined): boolean {
+  return reason?.trim().toLowerCase() === "session stopped";
+}
+
 function isGracefulProviderStop(reason: string): boolean {
-  return reason.trim().toLowerCase() === "session stopped";
+  return isSessionStoppedError(reason);
 }
 
 function isUnexpectedProviderExit(reason: string): boolean {

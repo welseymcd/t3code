@@ -148,6 +148,7 @@ describe("ProviderSessionReaper", () => {
       getReadModel: () => Effect.succeed(input.readModel),
       readEvents: () => Stream.empty,
       dispatch: () => unsupported(),
+      subscribeDomainEvents: () => Effect.succeed(Stream.empty),
       streamDomainEvents: Stream.empty,
     };
 

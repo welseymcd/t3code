@@ -17,6 +17,7 @@ COPY apps/marketing/package.json apps/marketing/package.json
 COPY packages/client-runtime/package.json packages/client-runtime/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/effect-acp/package.json packages/effect-acp/package.json
+COPY packages/effect-codex-app-server/package.json packages/effect-codex-app-server/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY scripts/package.json scripts/package.json
 
@@ -26,7 +27,7 @@ FROM deps AS build
 
 COPY . .
 
-RUN bun run build -- --filter=t3 --filter=@t3tools/web
+RUN bun run build -- --filter=t3 --filter=@t3tools/web --concurrency=1
 
 FROM oven/bun:1.3.11 AS runner
 
