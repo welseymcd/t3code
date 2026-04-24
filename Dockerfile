@@ -43,7 +43,13 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates docker-cli git gosu openssh-client \
+  && apt-get install -y --no-install-recommends bash ca-certificates docker-cli git gosu openssh-client wget \
+  && mkdir -p -m 755 /etc/apt/keyrings \
+  && wget -qO /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends gh \
   && ln -sf "$(command -v bun)" /usr/local/bin/node \
   && bun install -g "@openai/codex@${CODEX_CLI_VERSION}" \
   && rm -rf /var/lib/apt/lists/*
