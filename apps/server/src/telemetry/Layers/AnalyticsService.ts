@@ -35,12 +35,15 @@ const TelemetryEnvConfig = Config.all({
   ),
 });
 
+const TELEMETRY_FLUSH_TIMEOUT = "5 seconds";
+
 const makeAnalyticsService = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig.asEffect();
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
+  const flushFailureLoggedRef = yield* Ref.make(false);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
 
   const enqueueBufferedEvent = (event: string, properties?: Readonly<Record<string, unknown>>) =>
@@ -97,8 +100,21 @@ const makeAnalyticsService = Effect.gen(function* () {
       HttpClientRequest.bodyJson(payload),
       Effect.flatMap(httpClient.execute),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.timeout(TELEMETRY_FLUSH_TIMEOUT),
     );
   });
+
+  const noteFlushFailure = (cause: unknown, requeuedEventCount: number) =>
+    Ref.getAndSet(flushFailureLoggedRef, true).pipe(
+      Effect.flatMap((alreadyLogged) =>
+        alreadyLogged
+          ? Effect.void
+          : Effect.logDebug("telemetry flush failed; buffered events will be retried", {
+              cause,
+              requeuedEventCount,
+            }),
+      ),
+    );
 
   const flush: AnalyticsServiceShape["flush"] = Effect.gen(function* () {
     while (true) {
@@ -115,15 +131,22 @@ const makeAnalyticsService = Effect.gen(function* () {
         return;
       }
 
-      yield* sendBatch(batch).pipe(
-        Effect.catch((error) =>
+      const sent = yield* sendBatch(batch).pipe(
+        Effect.tap(() => Ref.set(flushFailureLoggedRef, false)),
+        Effect.as(true),
+        Effect.catch((cause) =>
           Ref.update(bufferRef, (current) => [...batch, ...current]).pipe(
-            Effect.flatMap(() => Effect.fail(error)),
+            Effect.flatMap(() => noteFlushFailure(cause, batch.length)),
+            Effect.as(false),
           ),
         ),
       );
+
+      if (!sent) {
+        return;
+      }
     }
-  }).pipe(Effect.catch((cause) => Effect.logError("Failed to flush telemetry", { cause })));
+  });
 
   const record: AnalyticsServiceShape["record"] = Effect.fn("record")(
     function* (event, properties) {

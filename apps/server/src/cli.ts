@@ -150,6 +150,18 @@ const EnvServerConfig = Config.all({
     Config.withDefault(10_000),
   ),
   otlpServiceName: Config.string("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
+  cloudflareEmailAccountId: Config.string("T3CODE_CLOUDFLARE_EMAIL_ACCOUNT_ID").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  cloudflareEmailApiToken: Config.string("T3CODE_CLOUDFLARE_EMAIL_API_TOKEN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  cloudflareEmailFrom: Config.string("T3CODE_CLOUDFLARE_EMAIL_FROM").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   mode: Config.schema(RuntimeMode, "T3CODE_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -351,6 +363,9 @@ export const resolveServerConfig = (
         persistedObservabilitySettings.otlpMetricsUrl,
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
+      cloudflareEmailAccountId: env.cloudflareEmailAccountId,
+      cloudflareEmailApiToken: env.cloudflareEmailApiToken,
+      cloudflareEmailFrom: env.cloudflareEmailFrom,
       mode,
       port,
       cwd,

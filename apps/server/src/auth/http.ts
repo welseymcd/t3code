@@ -2,6 +2,8 @@ import {
   type AuthBearerBootstrapResult,
   AuthBootstrapInput,
   AuthCreatePairingCredentialInput,
+  AuthEmailPairingLinkInput,
+  type AuthEmailPairingLinkResult,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
   type AuthWebSocketTokenResult,
@@ -9,6 +11,7 @@ import {
 import { DateTime, Effect, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
+import { ServerConfig } from "../config.ts";
 import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
@@ -183,6 +186,93 @@ const authenticateOwnerSession = Effect.gen(function* () {
   return { serverAuth, session } as const;
 });
 
+const EMAIL_ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateEmailAddress(value: string, label: string): Effect.Effect<string, AuthError> {
+  const trimmed = value.trim();
+  if (!EMAIL_ADDRESS_PATTERN.test(trimmed)) {
+    return Effect.fail(
+      new AuthError({
+        message: `Invalid ${label} email address.`,
+        status: 400,
+      }),
+    );
+  }
+  return Effect.succeed(trimmed);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function cloudflareEmailConfigError(): AuthError {
+  return new AuthError({
+    message:
+      "Cloudflare email is not configured. Set T3CODE_CLOUDFLARE_EMAIL_ACCOUNT_ID, T3CODE_CLOUDFLARE_EMAIL_API_TOKEN, and T3CODE_CLOUDFLARE_EMAIL_FROM.",
+    status: 400,
+  });
+}
+
+function sendCloudflarePairingEmail(input: {
+  readonly to: string;
+  readonly pairingUrl: string;
+  readonly label: string;
+}): Effect.Effect<void, AuthError, ServerConfig> {
+  return Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    const accountId = config.cloudflareEmailAccountId?.trim();
+    const apiToken = config.cloudflareEmailApiToken?.trim();
+    const fromAddress = config.cloudflareEmailFrom?.trim();
+    if (!accountId || !apiToken || !fromAddress) {
+      return yield* cloudflareEmailConfigError();
+    }
+    const from = yield* validateEmailAddress(fromAddress, "sender");
+
+    const escapedUrl = escapeHtml(input.pairingUrl);
+    const escapedLabel = escapeHtml(input.label);
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/email/sending/send`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${apiToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            to: input.to,
+            from,
+            subject: `Pair with ${input.label}`,
+            html: `<p>Use this one-time link to pair with <strong>${escapedLabel}</strong>:</p><p><a href="${escapedUrl}">${escapedUrl}</a></p>`,
+            text: `Use this one-time link to pair with ${input.label}:\n\n${input.pairingUrl}`,
+          }),
+        }),
+      catch: (cause) =>
+        new AuthError({
+          message: "Failed to send pairing email through Cloudflare.",
+          status: 500,
+          cause,
+        }),
+    });
+
+    if (!response.ok) {
+      const text = yield* Effect.promise(() => response.text()).pipe(
+        Effect.orElseSucceed(() => ""),
+      );
+      return yield* new AuthError({
+        message: text
+          ? `Cloudflare email request failed (${response.status}): ${text}`
+          : `Cloudflare email request failed (${response.status}).`,
+        status: response.status >= 500 ? 500 : 400,
+      });
+    }
+  });
+}
+
 export const authPairingLinksRouteLayer = HttpRouter.add(
   "GET",
   "/api/auth/pairing-links",
@@ -190,6 +280,64 @@ export const authPairingLinksRouteLayer = HttpRouter.add(
     const { serverAuth } = yield* authenticateOwnerSession;
     const pairingLinks = yield* serverAuth.listPairingLinks();
     return HttpServerResponse.jsonUnsafe(pairingLinks, { status: 200 });
+  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
+);
+
+export const authPairingLinksEmailRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/pairing-links/email",
+  Effect.gen(function* () {
+    const { serverAuth } = yield* authenticateOwnerSession;
+    const payload = yield* HttpServerRequest.schemaBodyJson(AuthEmailPairingLinkInput).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            message: "Invalid email pairing link payload.",
+            status: 400,
+            cause,
+          }),
+      ),
+    );
+    const to = yield* validateEmailAddress(payload.to, "recipient");
+    const pairingUrl = yield* Effect.try({
+      try: () => new URL(payload.pairingUrl),
+      catch: (cause) =>
+        new AuthError({
+          message: "Invalid pairing URL.",
+          status: 400,
+          cause,
+        }),
+    });
+    if (pairingUrl.protocol !== "http:" && pairingUrl.protocol !== "https:") {
+      return yield* new AuthError({
+        message: "Invalid pairing URL.",
+        status: 400,
+      });
+    }
+    const pairingLinks = yield* serverAuth.listPairingLinks();
+    const pairingLink = pairingLinks.find((link) => link.id === payload.id);
+    if (!pairingLink) {
+      return yield* new AuthError({
+        message: "Pairing link was not found or has expired.",
+        status: 400,
+      });
+    }
+    const pairingToken = new URLSearchParams(pairingUrl.hash.slice(1)).get("token");
+    if (pairingToken !== pairingLink.credential) {
+      return yield* new AuthError({
+        message: "Pairing URL does not match the selected pairing link.",
+        status: 400,
+      });
+    }
+
+    yield* sendCloudflarePairingEmail({
+      to,
+      pairingUrl: pairingUrl.toString(),
+      label: pairingLink.label ?? "T3 Code",
+    });
+    return HttpServerResponse.jsonUnsafe({ sent: true } satisfies AuthEmailPairingLinkResult, {
+      status: 200,
+    });
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
 

@@ -492,4 +492,35 @@ describe("resolveInitialServerAuthGateState", () => {
       method: "POST",
     });
   });
+
+  it("emails a pairing link from the authenticated auth endpoint", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      jsonResponse({
+        sent: true,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { emailServerPairingLink } = await import("./environments/primary");
+
+    await expect(
+      emailServerPairingLink({
+        id: "pairing-link-1",
+        to: "julius@example.com",
+        pairingUrl: "http://localhost/pair#token=pairing-token",
+      }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost/api/auth/pairing-links/email", {
+      body: JSON.stringify({
+        id: "pairing-link-1",
+        to: "julius@example.com",
+        pairingUrl: "http://localhost/pair#token=pairing-token",
+      }),
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+  });
 });

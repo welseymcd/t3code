@@ -53,6 +53,9 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly otlpMetricsUrl: string | undefined;
   readonly otlpExportIntervalMs: number;
   readonly otlpServiceName: string;
+  readonly cloudflareEmailAccountId?: string | undefined;
+  readonly cloudflareEmailApiToken?: string | undefined;
+  readonly cloudflareEmailFrom?: string | undefined;
   readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
@@ -152,6 +155,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           otlpMetricsUrl: undefined,
           otlpExportIntervalMs: 10_000,
           otlpServiceName: "t3-server",
+          cloudflareEmailAccountId: undefined,
+          cloudflareEmailApiToken: undefined,
+          cloudflareEmailFrom: undefined,
           cwd,
           baseDir,
           ...derivedPaths,

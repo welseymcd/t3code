@@ -256,6 +256,18 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
+export const AuthEmailPairingLinkInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  to: TrimmedNonEmptyString,
+  pairingUrl: TrimmedNonEmptyString,
+});
+export type AuthEmailPairingLinkInput = typeof AuthEmailPairingLinkInput.Type;
+
+export const AuthEmailPairingLinkResult = Schema.Struct({
+  sent: Schema.Boolean,
+});
+export type AuthEmailPairingLinkResult = typeof AuthEmailPairingLinkResult.Type;
+
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,

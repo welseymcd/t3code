@@ -31,7 +31,8 @@ RUN bun run build -- --filter=t3 --filter=@t3tools/web --concurrency=1
 
 FROM oven/bun:1.3.11 AS runner
 
-ARG CODEX_CLI_VERSION=0.120.0
+ARG CODEX_CLI_VERSION=0.124.0
+ARG OPENCODE_CLI_VERSION=1.14.23
 
 ENV NODE_ENV=production \
   T3CODE_MODE=web \
@@ -52,6 +53,15 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends gh \
   && ln -sf "$(command -v bun)" /usr/local/bin/node \
   && bun install -g "@openai/codex@${CODEX_CLI_VERSION}" \
+  && bun install -g "opencode-ai@${OPENCODE_CLI_VERSION}" \
+  && for binary in codex opencode; do \
+    binary_path="$(command -v "$binary")"; \
+    if [ "$binary_path" != "/usr/local/bin/$binary" ]; then \
+      ln -sf "$binary_path" "/usr/local/bin/$binary"; \
+    fi; \
+  done \
+  && command -v codex \
+  && command -v opencode \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app ./
@@ -64,7 +74,6 @@ RUN mkdir -p /data \
 EXPOSE 3773
 VOLUME ["/data"]
 
-# Provider CLIs such as `codex` or `claude` are intentionally not bundled here.
-# Extend this image if you want those binaries available inside the container.
+# Provider CLIs bundled in this image: `codex` and `opencode`.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["bun", "apps/server/dist/bin.mjs", "serve", "--host", "0.0.0.0", "--port", "3773", "--no-browser"]

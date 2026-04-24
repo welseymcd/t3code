@@ -1,4 +1,4 @@
-import { PlusIcon, QrCodeIcon } from "lucide-react";
+import { MailIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AuthClientSession,
@@ -48,6 +48,7 @@ import { Textarea } from "../ui/textarea";
 import { setPairingTokenOnUrl } from "../../pairingUrl";
 import {
   createServerPairingCredential,
+  emailServerPairingLink,
   fetchSessionState,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
@@ -273,6 +274,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     [pairingLink.expiresAt],
   );
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
+  const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
+  const [emailRecipient, setEmailRecipient] = useState("");
+  const [isEmailingPairingLink, setIsEmailingPairingLink] = useState(false);
 
   const currentOriginPairingUrl = useMemo(
     () => resolveCurrentOriginPairingUrl(pairingLink.credential),
@@ -315,6 +319,36 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const handleCopy = useCallback(() => {
     copyToClipboard(copyValue, undefined);
   }, [copyToClipboard, copyValue]);
+
+  const handleEmailPairingLink = useCallback(async () => {
+    if (!shareablePairingUrl) return;
+    setIsEmailingPairingLink(true);
+    try {
+      await emailServerPairingLink({
+        id: pairingLink.id,
+        to: emailRecipient,
+        pairingUrl: shareablePairingUrl,
+      });
+      setEmailRecipient("");
+      setIsEmailDialogOpen(false);
+      toastManager.add({
+        type: "success",
+        title: "Pairing link emailed",
+        description: "The recipient can open the link to pair as an authorized client.",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to email pairing link.";
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not email pairing link",
+          description: message,
+        }),
+      );
+    } finally {
+      setIsEmailingPairingLink(false);
+    }
+  }, [emailRecipient, pairingLink.id, shareablePairingUrl]);
 
   const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
 
@@ -375,6 +409,63 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {shareablePairingUrl ? (
+            <Dialog
+              open={isEmailDialogOpen}
+              onOpenChange={(open) => {
+                setIsEmailDialogOpen(open);
+                if (!open) {
+                  setEmailRecipient("");
+                }
+              }}
+            >
+              <DialogTrigger
+                render={
+                  <Button size="xs" variant="outline">
+                    <MailIcon className="size-3" />
+                    Email
+                  </Button>
+                }
+              />
+              <DialogPopup className="max-w-sm">
+                <DialogHeader>
+                  <DialogTitle>Email pairing link</DialogTitle>
+                  <DialogDescription>
+                    Send this one-time pairing link through the configured Cloudflare email sender.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogPanel>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-foreground">
+                      Recipient email
+                    </span>
+                    <Input
+                      value={emailRecipient}
+                      onChange={(event) => setEmailRecipient(event.target.value)}
+                      placeholder="name@example.com"
+                      disabled={isEmailingPairingLink}
+                      autoFocus
+                    />
+                  </label>
+                </DialogPanel>
+                <DialogFooter variant="bare">
+                  <Button
+                    variant="outline"
+                    disabled={isEmailingPairingLink}
+                    onClick={() => setIsEmailDialogOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={isEmailingPairingLink}
+                    onClick={() => void handleEmailPairingLink()}
+                  >
+                    {isEmailingPairingLink ? "Sending…" : "Send email"}
+                  </Button>
+                </DialogFooter>
+              </DialogPopup>
+            </Dialog>
+          ) : null}
           <Dialog open={isRevealDialogOpen} onOpenChange={setIsRevealDialogOpen}>
             {canCopyToClipboard ? (
               <Button size="xs" variant="outline" onClick={handleCopy}>

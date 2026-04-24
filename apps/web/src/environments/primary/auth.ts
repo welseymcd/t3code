@@ -3,6 +3,8 @@ import type {
   AuthBootstrapResult,
   AuthClientMetadata,
   AuthCreatePairingCredentialInput,
+  AuthEmailPairingLinkInput,
+  AuthEmailPairingLinkResult,
   AuthPairingCredentialResult,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
@@ -284,6 +286,25 @@ export async function revokeServerPairingLink(id: string): Promise<void> {
       await readErrorMessage(response, `Failed to revoke pairing link (${response.status}).`),
     );
   }
+}
+
+export async function emailServerPairingLink(input: AuthEmailPairingLinkInput): Promise<void> {
+  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/pairing-links/email"), {
+    body: JSON.stringify(input),
+    credentials: "include",
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(response, `Failed to email pairing link (${response.status}).`),
+    );
+  }
+
+  (await response.json()) as AuthEmailPairingLinkResult;
 }
 
 export async function listServerClientSessions(): Promise<

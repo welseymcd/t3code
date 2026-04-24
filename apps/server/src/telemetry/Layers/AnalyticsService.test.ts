@@ -116,4 +116,63 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       );
     }),
   );
+
+  it.effect("flush is best-effort when the telemetry endpoint rejects a batch", () =>
+    Effect.gen(function* () {
+      const capturedRequests: Array<RecordedBatchRequest> = [];
+      const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-telemetry-reject-",
+      });
+
+      const telemetryLayer = AnalyticsServiceLayerLive.pipe(Layer.provideMerge(serverConfigLayer));
+      const configLayer = ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_POSTHOG_KEY: "phc_test_key",
+          T3CODE_POSTHOG_HOST: "",
+          T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+        }),
+      );
+      const rejectingBatchServerLayer = HttpServer.serve(
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          if (request.method !== "POST") {
+            return HttpServerResponse.empty({ status: 404 });
+          }
+
+          const payload = yield* request.json.pipe(
+            Effect.map((body) => body as RecordedBatchRequest["body"]),
+            Effect.catch(() => Effect.succeed(null)),
+          );
+
+          capturedRequests.push({ path: request.url, body: payload });
+
+          return HttpServerResponse.empty({ status: 503 });
+        }),
+      );
+      const runtimeLayer = telemetryLayer.pipe(
+        Layer.provide(configLayer),
+        Layer.provideMerge(NodeHttpServer.layerTest),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* Layer.launch(rejectingBatchServerLayer).pipe(Effect.forkScoped);
+        const analytics = yield* AnalyticsService;
+
+        yield* analytics.record("test.flush.rejects", { index: 1 });
+
+        yield* analytics.flush;
+        yield* analytics.flush;
+      }).pipe(Effect.provide(runtimeLayer));
+
+      const batchRequests = capturedRequests.filter(
+        (request): request is RecordedBatchRequest & { readonly body: RecordedBatchBody } =>
+          Array.isArray(request.body?.batch),
+      );
+
+      assert.equal(batchRequests.length >= 2, true);
+      assert.equal(batchRequests[0]?.body.batch[0]?.event, "test.flush.rejects");
+      assert.equal(batchRequests[1]?.body.batch[0]?.event, "test.flush.rejects");
+    }),
+  );
 });

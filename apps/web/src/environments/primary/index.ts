@@ -16,6 +16,7 @@ export {
 
 export {
   createServerPairingCredential,
+  emailServerPairingLink,
   fetchSessionState,
   listServerClientSessions,
   listServerPairingLinks,
