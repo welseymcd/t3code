@@ -2,6 +2,7 @@
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import {
+  DEFAULT_ADD_PROJECT_BASE_DIRECTORY_FALLBACK,
   DEFAULT_MODEL_BY_PROVIDER,
   type EnvironmentId,
   type FilesystemBrowseResult,
@@ -314,7 +315,7 @@ function OpenCommandPaletteDialog() {
             : null;
       const baseDirectory = environmentSettings?.addProjectBaseDirectory?.trim() ?? "";
       if (baseDirectory.length === 0) {
-        return "~/";
+        return ensureBrowseDirectoryPath(DEFAULT_ADD_PROJECT_BASE_DIRECTORY_FALLBACK);
       }
       return ensureBrowseDirectoryPath(baseDirectory);
     },
@@ -328,7 +329,10 @@ function OpenCommandPaletteDialog() {
           : environmentId
             ? savedEnvironmentRuntimeById[environmentId]?.serverConfig?.settings
             : null;
-      return environmentSettings?.addProjectBaseDirectory?.trim() || "~/";
+      return (
+        environmentSettings?.addProjectBaseDirectory?.trim() ||
+        DEFAULT_ADD_PROJECT_BASE_DIRECTORY_FALLBACK
+      );
     },
     [primaryEnvironmentId, savedEnvironmentRuntimeById, settings],
   );

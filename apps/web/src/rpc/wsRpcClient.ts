@@ -10,7 +10,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
-import { Effect, Stream } from "effect";
+import { Duration, Effect, Stream } from "effect";
 
 import { type WsRpcProtocolClient } from "./protocol";
 import { resetWsReconnectBackoff } from "./wsConnectionState";
@@ -51,6 +51,10 @@ type RpcInputStreamMethod<TTag extends RpcTag> =
 interface GitRunStackedActionOptions {
   readonly onProgress?: (event: GitActionProgressEvent) => void;
 }
+
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 8_000;
+const HEARTBEAT_FAILURES_BEFORE_RECONNECT = 2;
 
 export interface WsRpcClient {
   readonly dispose: () => Promise<void>;
@@ -125,8 +129,13 @@ export interface WsRpcClient {
 }
 
 export function createWsRpcClient(transport: WsTransport): WsRpcClient {
+  const heartbeat = startHeartbeat(transport);
+
   return {
-    dispose: () => transport.dispose(),
+    dispose: async () => {
+      heartbeat.stop();
+      await transport.dispose();
+    },
     reconnect: async () => {
       resetWsReconnectBackoff();
       await transport.reconnect();
@@ -260,6 +269,62 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           listener,
           options,
         ),
+    },
+  };
+}
+
+function startHeartbeat(transport: WsTransport): { readonly stop: () => void } {
+  let stopped = false;
+  let inFlight = false;
+  let consecutiveFailures = 0;
+  let reconnecting = false;
+
+  const heartbeat = async () => {
+    if (stopped || inFlight || reconnecting) {
+      return;
+    }
+
+    inFlight = true;
+    try {
+      await transport.request(
+        (client) =>
+          client[WS_METHODS.serverPing]({
+            clientTime: new Date().toISOString(),
+          }),
+        {
+          timeout: Duration.millis(HEARTBEAT_TIMEOUT_MS),
+        },
+      );
+      consecutiveFailures = 0;
+    } catch {
+      consecutiveFailures += 1;
+      if (consecutiveFailures < HEARTBEAT_FAILURES_BEFORE_RECONNECT || stopped) {
+        return;
+      }
+
+      reconnecting = true;
+      try {
+        resetWsReconnectBackoff();
+        await transport.reconnect();
+        consecutiveFailures = 0;
+      } catch {
+        // Connection state is already updated by the transport lifecycle hooks.
+      } finally {
+        reconnecting = false;
+      }
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  const intervalId = setInterval(() => {
+    void heartbeat();
+  }, HEARTBEAT_INTERVAL_MS);
+
+  return {
+    stop: () => {
+      stopped = true;
+      clearInterval(intervalId);
     },
   };
 }

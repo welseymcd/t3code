@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
+  DEFAULT_ADD_PROJECT_BASE_DIRECTORY_FALLBACK,
   DEFAULT_UNIFIED_SETTINGS,
   type PlanSidebarAutoOpenMode,
 } from "@t3tools/contracts/settings";
@@ -1122,7 +1123,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Add project starts in"
-          description='Leave empty to use "~/" when the Add Project browser opens.'
+          description={`Leave empty to use "${DEFAULT_ADD_PROJECT_BASE_DIRECTORY_FALLBACK}" when the Add Project browser opens.`}
           resetAction={
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
@@ -1141,7 +1142,7 @@ export function GeneralSettingsPanel() {
               className="w-full sm:w-72"
               value={settings.addProjectBaseDirectory}
               onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
-              placeholder="~/"
+              placeholder={DEFAULT_ADD_PROJECT_BASE_DIRECTORY_FALLBACK}
               spellCheck={false}
               aria-label="Add project base directory"
             />

@@ -4436,14 +4436,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect.element(palette).toBeInTheDocument();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
-      await expect.element(browseInput).toHaveValue("~/");
+      await expect.element(browseInput).toHaveValue("~/Development/");
 
       await vi.waitFor(
         () => {
           expect(
             wsRequests.some(
               (request) =>
-                request._tag === WS_METHODS.filesystemBrowse && request.partialPath === "~/",
+                request._tag === WS_METHODS.filesystemBrowse &&
+                request.partialPath === "~/Development/",
             ),
           ).toBe(true);
         },
