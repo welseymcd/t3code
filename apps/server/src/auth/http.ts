@@ -12,9 +12,10 @@ import { DateTime, Effect, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
+import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
 import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
-import { deriveAuthClientMetadata } from "./utils.ts";
+import { base64UrlEncode, deriveAuthClientMetadata, signPayload } from "./utils.ts";
 
 export const respondToAuthError = (error: AuthError) =>
   Effect.gen(function* () {
@@ -48,6 +49,62 @@ const PairingCredentialRequestHeaders = Schema.Struct({
   "content-type": Schema.optionalKey(Schema.String),
   "transfer-encoding": Schema.optionalKey(Schema.String),
 });
+
+const RAuthClaimProofInput = Schema.Struct({
+  environmentId: Schema.String,
+  label: Schema.String,
+  httpBaseUrl: Schema.String,
+  wsBaseUrl: Schema.String,
+});
+
+function normalizeBaseUrl(rawValue: string, expectedProtocols: ReadonlyArray<string>): string {
+  const url = new URL(rawValue);
+  if (!expectedProtocols.includes(url.protocol)) {
+    throw new Error(`Unsupported URL protocol: ${url.protocol}`);
+  }
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function signRAuthClaimProof(input: {
+  readonly issuer: string;
+  readonly registrationToken: string;
+  readonly environmentId: string;
+  readonly label: string;
+  readonly httpBaseUrl: string;
+  readonly wsBaseUrl: string;
+}): {
+  readonly proof: string;
+  readonly expiresAt: string;
+} {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expiresAtSeconds = nowSeconds + 300;
+  const header = {
+    alg: "HS256",
+    typ: "t3-claim-proof",
+  } as const;
+  const claims = {
+    v: 1,
+    iss: input.environmentId,
+    aud: input.issuer,
+    environmentId: input.environmentId,
+    label: input.label,
+    httpBaseUrl: input.httpBaseUrl,
+    wsBaseUrl: input.wsBaseUrl,
+    iat: nowSeconds,
+    exp: expiresAtSeconds,
+  } as const;
+  const signingInput = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(
+    JSON.stringify(claims),
+  )}`;
+  const signature = signPayload(signingInput, new TextEncoder().encode(input.registrationToken));
+  return {
+    proof: `${signingInput}.${signature}`,
+    expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
+  };
+}
 
 function hasRequestBody(headers: typeof PairingCredentialRequestHeaders.Type) {
   const contentLengthHeader = headers["content-length"];
@@ -170,6 +227,91 @@ export const authPairingCredentialRouteLayer = HttpRouter.add(
       : {};
     const result = yield* serverAuth.issuePairingCredential(payload);
     return HttpServerResponse.jsonUnsafe(result, { status: 200 });
+  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
+);
+
+export const authRAuthClaimProofRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/r-auth/claim-proof",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* ServerAuth;
+    const session = yield* serverAuth.authenticateHttpRequest(request);
+    if (session.role !== "owner") {
+      return yield* new AuthError({
+        message: "Only owner sessions can create r-auth claim proofs.",
+        status: 403,
+      });
+    }
+
+    const config = yield* ServerConfig;
+    const issuer = config.rAuthIssuer?.trim();
+    const registrationToken = config.rAuthRegistrationToken?.trim();
+    if (!issuer || !registrationToken) {
+      return yield* new AuthError({
+        message: "r-auth backend registration is not configured.",
+        status: 500,
+      });
+    }
+
+    const serverEnvironment = yield* ServerEnvironment;
+    const currentEnvironmentId = yield* serverEnvironment.getEnvironmentId;
+    const payload = yield* HttpServerRequest.schemaBodyJson(RAuthClaimProofInput).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            message: "Invalid r-auth claim proof payload.",
+            status: 400,
+            cause,
+          }),
+      ),
+    );
+    if (payload.environmentId !== currentEnvironmentId) {
+      return yield* new AuthError({
+        message: "Claim proof environment does not match this backend.",
+        status: 400,
+      });
+    }
+
+    const httpBaseUrl = yield* Effect.try({
+      try: () => normalizeBaseUrl(payload.httpBaseUrl, ["http:", "https:"]),
+      catch: (cause) =>
+        new AuthError({
+          message: "Invalid r-auth claim HTTP base URL.",
+          status: 400,
+          cause,
+        }),
+    });
+    const wsBaseUrl = yield* Effect.try({
+      try: () => normalizeBaseUrl(payload.wsBaseUrl, ["ws:", "wss:"]),
+      catch: (cause) =>
+        new AuthError({
+          message: "Invalid r-auth claim WebSocket base URL.",
+          status: 400,
+          cause,
+        }),
+    });
+    const issued = signRAuthClaimProof({
+      issuer,
+      registrationToken,
+      environmentId: currentEnvironmentId,
+      label: payload.label.trim(),
+      httpBaseUrl,
+      wsBaseUrl,
+    });
+
+    return HttpServerResponse.jsonUnsafe(
+      {
+        ok: true,
+        environmentId: currentEnvironmentId,
+        label: payload.label.trim(),
+        httpBaseUrl,
+        wsBaseUrl,
+        proof: issued.proof,
+        expiresAt: issued.expiresAt,
+      },
+      { status: 200 },
+    );
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
 

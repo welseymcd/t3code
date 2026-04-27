@@ -162,6 +162,18 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  rAuthIssuer: Config.string("T3CODE_R_AUTH_ISSUER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  rAuthSharedSecret: Config.string("T3CODE_R_AUTH_SHARED_SECRET").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  rAuthRegistrationToken: Config.string("T3CODE_R_AUTH_REGISTRATION_TOKEN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   mode: Config.schema(RuntimeMode, "T3CODE_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -366,6 +378,9 @@ export const resolveServerConfig = (
       cloudflareEmailAccountId: env.cloudflareEmailAccountId,
       cloudflareEmailApiToken: env.cloudflareEmailApiToken,
       cloudflareEmailFrom: env.cloudflareEmailFrom,
+      rAuthIssuer: env.rAuthIssuer,
+      rAuthSharedSecret: env.rAuthSharedSecret,
+      rAuthRegistrationToken: env.rAuthRegistrationToken,
       mode,
       port,
       cwd,
@@ -797,8 +812,13 @@ const jsonFlag = Flag.boolean("json").pipe(
 );
 
 const sessionRoleFlag = Flag.choice("role", ["owner", "client"]).pipe(
-  Flag.withDescription("Role for the issued bearer session."),
+  Flag.withDescription("Role for the issued auth credential."),
   Flag.withDefault("owner"),
+);
+
+const pairingRoleFlag = Flag.choice("role", ["client", "owner"]).pipe(
+  Flag.withDescription("Role for the issued one-time pairing token."),
+  Flag.withDefault("client"),
 );
 
 const labelFlag = Flag.string("label").pipe(
@@ -824,19 +844,20 @@ const tokenOnlyFlag = Flag.boolean("token-only").pipe(
 const pairingCreateCommand = Command.make("create", {
   ...authLocationFlags,
   ttl: ttlFlag,
+  role: pairingRoleFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Issue a new client pairing token."),
+  Command.withDescription("Issue a new one-time pairing token."),
   Command.withHandler((flags) =>
     runWithAuthControlPlane(
       flags,
       (authControlPlane) =>
         Effect.gen(function* () {
           const issued = yield* authControlPlane.createPairingLink({
-            role: "client",
-            subject: "one-time-token",
+            role: flags.role,
+            subject: flags.role === "owner" ? "owner-bootstrap" : "one-time-token",
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
           });

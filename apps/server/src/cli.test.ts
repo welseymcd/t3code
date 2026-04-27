@@ -6,6 +6,7 @@ import { join } from "node:path";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
+import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,6 +31,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
+import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
@@ -115,6 +117,12 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         ServerAuthLive.pipe(
           Layer.provideMerge(SqlitePersistenceLayerLive),
           Layer.provide(ServerSecretStoreLive),
+          Layer.provide(
+            Layer.succeed(ServerEnvironment, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-test")),
+              getDescriptor: Effect.die("unused"),
+            }),
+          ),
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
@@ -181,6 +189,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
       const created = JSON.parse(createdOutput.output) as {
         readonly id: string;
         readonly credential: string;
+        readonly role: string;
       };
       const listedOutput = yield* captureStdout(
         runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
@@ -193,9 +202,30 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
       assert.equal(typeof created.id, "string");
       assert.equal(typeof created.credential, "string");
       assert.equal(created.credential.length > 0, true);
+      assert.equal(created.role, "client");
       assert.equal(listed.length, 1);
       assert.equal(listed[0]?.id, created.id);
       assert.equal("credential" in (listed[0] ?? {}), false);
+    }),
+  );
+
+  it.effect("can issue an owner bootstrap pairing token from the auth CLI", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-auth-owner-pairing-test-"));
+
+      const createdOutput = yield* captureStdout(
+        runCli(["auth", "pairing", "create", "--base-dir", baseDir, "--role", "owner", "--json"]),
+      );
+      const created = JSON.parse(createdOutput.output) as {
+        readonly id: string;
+        readonly credential: string;
+        readonly role: string;
+      };
+
+      assert.equal(typeof created.id, "string");
+      assert.equal(typeof created.credential, "string");
+      assert.equal(created.credential.length > 0, true);
+      assert.equal(created.role, "owner");
     }),
   );
 

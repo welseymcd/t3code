@@ -57,6 +57,10 @@ function isPersistedSavedEnvironmentStorageRecord(
     typeof value.wsBaseUrl === "string" &&
     typeof value.createdAt === "string" &&
     (value.lastConnectedAt === null || typeof value.lastConnectedAt === "string") &&
+    (value.source === undefined || value.source === "manual" || value.source === "r-auth") &&
+    (value.lastSyncedAt === undefined ||
+      value.lastSyncedAt === null ||
+      typeof value.lastSyncedAt === "string") &&
     (value.encryptedBearerToken === undefined || typeof value.encryptedBearerToken === "string")
   );
 }
@@ -84,6 +88,8 @@ function toPersistedSavedEnvironmentRecord(
     wsBaseUrl: record.wsBaseUrl,
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
+    ...(record.source ? { source: record.source } : {}),
+    ...(record.lastSyncedAt !== undefined ? { lastSyncedAt: record.lastSyncedAt } : {}),
   };
 }
 
@@ -134,6 +140,8 @@ export function writeSavedEnvironmentRegistry(
             wsBaseUrl: record.wsBaseUrl,
             createdAt: record.createdAt,
             lastConnectedAt: record.lastConnectedAt,
+            ...(record.source ? { source: record.source } : {}),
+            ...(record.lastSyncedAt !== undefined ? { lastSyncedAt: record.lastSyncedAt } : {}),
             encryptedBearerToken,
           }
         : record;
@@ -196,6 +204,8 @@ export function writeSavedEnvironmentSecret(input: {
         wsBaseUrl: record.wsBaseUrl,
         createdAt: record.createdAt,
         lastConnectedAt: record.lastConnectedAt,
+        ...(record.source ? { source: record.source } : {}),
+        ...(record.lastSyncedAt !== undefined ? { lastSyncedAt: record.lastSyncedAt } : {}),
         encryptedBearerToken,
       } satisfies PersistedSavedEnvironmentStorageRecord;
     }),

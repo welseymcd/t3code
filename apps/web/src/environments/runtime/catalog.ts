@@ -3,6 +3,7 @@ import type {
   AuthSessionRole,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
+  PersistedSavedEnvironmentSource,
   PersistedSavedEnvironmentRecord,
   ServerConfig,
 } from "@t3tools/contracts";
@@ -18,6 +19,8 @@ export interface SavedEnvironmentRecord {
   readonly httpBaseUrl: string;
   readonly createdAt: string;
   readonly lastConnectedAt: string | null;
+  readonly source: PersistedSavedEnvironmentSource;
+  readonly lastSyncedAt: string | null;
 }
 
 interface SavedEnvironmentRegistryState {
@@ -44,6 +47,8 @@ function toPersistedSavedEnvironmentRecord(
     wsBaseUrl: record.wsBaseUrl,
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
+    source: record.source,
+    lastSyncedAt: record.lastSyncedAt,
   };
 }
 
@@ -72,10 +77,24 @@ function persistSavedEnvironmentRegistryState(
 }
 
 function replaceSavedEnvironmentRegistryState(
-  records: ReadonlyArray<SavedEnvironmentRecord>,
+  records: ReadonlyArray<PersistedSavedEnvironmentRecord>,
 ): void {
   const currentById = useSavedEnvironmentRegistryStore.getState().byId;
-  const hydratedById = Object.fromEntries(records.map((record) => [record.environmentId, record]));
+  const hydratedById = Object.fromEntries(
+    records.map((record) => [
+      record.environmentId,
+      {
+        environmentId: record.environmentId,
+        label: record.label,
+        httpBaseUrl: record.httpBaseUrl,
+        wsBaseUrl: record.wsBaseUrl,
+        createdAt: record.createdAt,
+        lastConnectedAt: record.lastConnectedAt,
+        source: record.source ?? "manual",
+        lastSyncedAt: record.lastSyncedAt ?? null,
+      } satisfies SavedEnvironmentRecord,
+    ]),
+  );
   useSavedEnvironmentRegistryStore.setState({
     byId: {
       ...hydratedById,
@@ -172,6 +191,12 @@ export function listSavedEnvironmentRecords(): ReadonlyArray<SavedEnvironmentRec
   return Object.values(useSavedEnvironmentRegistryStore.getState().byId).toSorted((left, right) =>
     left.label.localeCompare(right.label),
   );
+}
+
+export function listSavedEnvironmentRecordsBySource(
+  source: PersistedSavedEnvironmentSource,
+): ReadonlyArray<SavedEnvironmentRecord> {
+  return listSavedEnvironmentRecords().filter((record) => record.source === source);
 }
 
 export function getSavedEnvironmentRecord(

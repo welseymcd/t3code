@@ -13,6 +13,7 @@ import { AuthControlPlane } from "../Services/AuthControlPlane.ts";
 import { ServerAuthPolicyLive } from "./ServerAuthPolicy.ts";
 import { BootstrapCredentialService } from "../Services/BootstrapCredentialService.ts";
 import { BootstrapCredentialError } from "../Services/BootstrapCredentialService.ts";
+import { ExternalAuthGrantVerifier } from "../Services/ExternalAuthGrantVerifier.ts";
 import { ServerAuthPolicy } from "../Services/ServerAuthPolicy.ts";
 import {
   ServerAuth,
@@ -25,6 +26,7 @@ import {
   SessionCredentialService,
 } from "../Services/SessionCredentialService.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
+import { ExternalAuthGrantVerifierLive } from "./ExternalAuthGrantVerifier.ts";
 
 type BootstrapExchangeResult = {
   readonly response: AuthBootstrapResult;
@@ -63,8 +65,68 @@ export const makeServerAuth = Effect.gen(function* () {
   const policy = yield* ServerAuthPolicy;
   const bootstrapCredentials = yield* BootstrapCredentialService;
   const authControlPlane = yield* AuthControlPlane;
+  const externalGrantVerifier = yield* ExternalAuthGrantVerifier;
   const sessions = yield* SessionCredentialService;
   const descriptor = yield* policy.getDescriptor();
+
+  const resolveBootstrapGrant = (credential: string) =>
+    bootstrapCredentials.consume(credential).pipe(
+      Effect.catchTag("BootstrapCredentialError", (cause) => {
+        if (cause.status === 500) {
+          return Effect.fail(toBootstrapExchangeAuthError(cause));
+        }
+
+        return externalGrantVerifier.verify(credential).pipe(
+          Effect.map((grant) => ({
+            method: "bearer-session-token" as const,
+            role: grant.role,
+            subject: `r-auth:${grant.subject}`,
+            label: grant.name || grant.email,
+            expiresAt: grant.expiresAt,
+          })),
+          Effect.mapError((externalCause) =>
+            externalCause.reason === "unexpected"
+              ? new AuthError({
+                  message: "Failed to validate bootstrap credential.",
+                  status: 500,
+                  cause: externalCause,
+                })
+              : toBootstrapExchangeAuthError(cause),
+          ),
+        );
+      }),
+    );
+
+  const issueBootstrapSession = (input: {
+    readonly credential: string;
+    readonly requestMetadata: NonNullable<
+      NonNullable<Parameters<typeof sessions.issue>[0]>["client"]
+    >;
+    readonly method: "browser-session-cookie" | "bearer-session-token";
+  }) =>
+    resolveBootstrapGrant(input.credential).pipe(
+      Effect.flatMap((grant) =>
+        sessions
+          .issue({
+            method: input.method,
+            subject: grant.subject,
+            role: grant.role,
+            client: {
+              ...input.requestMetadata,
+              ...(grant.label ? { label: grant.label } : {}),
+            },
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new AuthError({
+                  message: "Failed to issue authenticated session.",
+                  cause,
+                }),
+            ),
+          ),
+      ),
+    );
 
   const authenticateToken = (token: string): Effect.Effect<AuthenticatedSession, AuthError> =>
     sessions.verify(token).pipe(
@@ -131,29 +193,11 @@ export const makeServerAuth = Effect.gen(function* () {
     credential,
     requestMetadata,
   ) =>
-    bootstrapCredentials.consume(credential).pipe(
-      Effect.mapError(toBootstrapExchangeAuthError),
-      Effect.flatMap((grant) =>
-        sessions
-          .issue({
-            method: "browser-session-cookie",
-            subject: grant.subject,
-            role: grant.role,
-            client: {
-              ...requestMetadata,
-              ...(grant.label ? { label: grant.label } : {}),
-            },
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new AuthError({
-                  message: "Failed to issue authenticated session.",
-                  cause,
-                }),
-            ),
-          ),
-      ),
+    issueBootstrapSession({
+      credential,
+      requestMetadata,
+      method: "browser-session-cookie",
+    }).pipe(
       Effect.map(
         (session) =>
           ({
@@ -170,29 +214,11 @@ export const makeServerAuth = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForBearerSession: ServerAuthShape["exchangeBootstrapCredentialForBearerSession"] =
     (credential, requestMetadata) =>
-      bootstrapCredentials.consume(credential).pipe(
-        Effect.mapError(toBootstrapExchangeAuthError),
-        Effect.flatMap((grant) =>
-          sessions
-            .issue({
-              method: "bearer-session-token",
-              subject: grant.subject,
-              role: grant.role,
-              client: {
-                ...requestMetadata,
-                ...(grant.label ? { label: grant.label } : {}),
-              },
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new AuthError({
-                    message: "Failed to issue authenticated session.",
-                    cause,
-                  }),
-              ),
-            ),
-        ),
+      issueBootstrapSession({
+        credential,
+        requestMetadata,
+        method: "bearer-session-token",
+      }).pipe(
         Effect.map(
           (session) =>
             ({
@@ -391,5 +417,6 @@ export const makeServerAuth = Effect.gen(function* () {
 export const ServerAuthLive = Layer.effect(ServerAuth, makeServerAuth).pipe(
   Layer.provideMerge(AuthControlPlaneLive),
   Layer.provideMerge(AuthCoreLive),
+  Layer.provideMerge(ExternalAuthGrantVerifierLive),
   Layer.provideMerge(ServerAuthPolicyLive),
 );

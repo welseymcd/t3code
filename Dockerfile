@@ -33,6 +33,7 @@ FROM oven/bun:1.3.11 AS runner
 
 ARG CODEX_CLI_VERSION=0.124.0
 ARG OPENCODE_CLI_VERSION=1.14.23
+ARG DEVCONTAINERS_CLI_VERSION=0.86.0
 
 ENV NODE_ENV=production \
   HOME=/data/home \
@@ -58,9 +59,10 @@ RUN apt-get update \
   && apt-get update \
   && apt-get install -y --no-install-recommends gh \
   && ln -sf "$(command -v bun)" /usr/local/bin/node \
+  && bun install -g "@devcontainers/cli@${DEVCONTAINERS_CLI_VERSION}" \
   && bun install -g "@openai/codex@${CODEX_CLI_VERSION}" \
   && bun install -g "opencode-ai@${OPENCODE_CLI_VERSION}" \
-  && for binary in codex opencode; do \
+  && for binary in codex devcontainer opencode; do \
     binary_path="$(command -v "$binary")"; \
     if [ "$binary_path" != "/usr/local/bin/$binary" ]; then \
       ln -sf "$binary_path" "/usr/local/bin/$binary"; \

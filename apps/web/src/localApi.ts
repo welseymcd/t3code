@@ -14,6 +14,7 @@ import {
 } from "./environments/runtime";
 import { type WsRpcClient } from "./rpc/wsRpcClient";
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { resetRAuthSyncStoreForTests } from "./rAuth/sync";
 import {
   readBrowserClientSettings,
   readBrowserSavedEnvironmentRegistry,
@@ -147,6 +148,7 @@ export async function __resetLocalApiForTests() {
   await resetEnvironmentServiceForTests();
   resetGitStatusStateForTests();
   resetRequestLatencyStateForTests();
+  resetRAuthSyncStoreForTests();
   resetSavedEnvironmentRegistryStoreForTests();
   resetSavedEnvironmentRuntimeStoreForTests();
   resetServerStateForTests();

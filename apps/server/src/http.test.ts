@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+import { isLoopbackHostname, resolveDevRedirectUrl, resolveRAuthProxyTargetUrl } from "./http.ts";
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
@@ -23,5 +23,23 @@ describe("http dev routing", () => {
     expect(resolveDevRedirectUrl(devUrl, requestUrl)).toBe(
       "http://127.0.0.1:5173/pair?token=test-token",
     );
+  });
+
+  it("maps same-origin r-auth proxy paths to the configured issuer", () => {
+    expect(
+      resolveRAuthProxyTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/api/r-auth/rest/v1/auth/session",
+      ),
+    ).toBe("https://auth.example.com/rest/v1/auth/session");
+  });
+
+  it("rejects non r-auth proxy paths", () => {
+    expect(
+      resolveRAuthProxyTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/api/r-auth/rest/v1/admin/users",
+      ),
+    ).toBeNull();
   });
 });

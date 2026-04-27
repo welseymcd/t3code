@@ -164,8 +164,8 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
-  isSessionStoppedError,
   resolveProviderSessionFailure,
+  resolveVisibleThreadError,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
@@ -479,7 +479,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     () =>
       project
         ? projectScriptRuntimeEnv({
-            project: { cwd: project.cwd },
+            project: { cwd: project.cwd, name: project.name },
             worktreePath: effectiveWorktreePath,
           })
         : {},
@@ -856,9 +856,6 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [activeLatestTurn, activeThread?.session],
   );
-  const sessionStoppedToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
-  const shouldShowSessionStoppedToast =
-    providerSessionFailure === null && isSessionStoppedError(activeThread?.error);
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
@@ -1670,48 +1667,6 @@ export default function ChatView(props: ChatViewProps) {
     [draftId, routeThreadRef, serverThread, setStoreThreadError],
   );
 
-  useEffect(() => {
-    if (!shouldShowSessionStoppedToast || !activeThread || !activeThreadRef) {
-      if (sessionStoppedToastIdRef.current !== null) {
-        toastManager.close(sessionStoppedToastIdRef.current);
-        sessionStoppedToastIdRef.current = null;
-      }
-      return;
-    }
-
-    const nextToast = {
-      title: "Session stopped",
-      description: "Send another message to start a new session for this thread.",
-      timeout: 0,
-      type: "warning" as const,
-      actionProps: {
-        children: "Dismiss",
-        onClick: () => setThreadError(activeThread.id, null),
-      },
-      data: {
-        actionVariant: "outline" as const,
-        hideCopyButton: true,
-        threadRef: activeThreadRef,
-      },
-    };
-
-    if (sessionStoppedToastIdRef.current !== null) {
-      toastManager.update(sessionStoppedToastIdRef.current, nextToast);
-      return;
-    }
-
-    sessionStoppedToastIdRef.current = toastManager.add(nextToast);
-  }, [activeThread, activeThreadRef, setThreadError, shouldShowSessionStoppedToast]);
-
-  useEffect(() => {
-    return () => {
-      if (sessionStoppedToastIdRef.current !== null) {
-        toastManager.close(sessionStoppedToastIdRef.current);
-        sessionStoppedToastIdRef.current = null;
-      }
-    };
-  }, []);
-
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef.current]);
@@ -1838,6 +1793,7 @@ export default function ChatView(props: ChatViewProps) {
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
           cwd: activeProject.cwd,
+          name: activeProject.name,
         },
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
@@ -3492,7 +3448,10 @@ export default function ChatView(props: ChatViewProps) {
       <ProviderStatusBanner status={activeProviderStatus} />
       <ProviderSessionFailureBanner failure={providerSessionFailure} />
       <ThreadErrorBanner
-        error={providerSessionFailure || shouldShowSessionStoppedToast ? null : activeThread.error}
+        error={resolveVisibleThreadError({
+          providerSessionFailure,
+          threadError: activeThread.error,
+        })}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}

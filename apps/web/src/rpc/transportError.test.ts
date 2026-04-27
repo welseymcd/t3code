@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isTransportConnectionErrorMessage, sanitizeThreadErrorMessage } from "./transportError";
+import {
+  isTransportConnectionErrorMessage,
+  isTransientRpcInterruptionMessage,
+  sanitizeThreadErrorMessage,
+} from "./transportError";
 
 describe("transportError", () => {
   it("detects websocket transport failures", () => {
@@ -9,6 +13,12 @@ describe("transportError", () => {
       true,
     );
     expect(isTransportConnectionErrorMessage("SocketOpenError: Timeout")).toBe(true);
+  });
+
+  it("detects transient rpc interruptions", () => {
+    expect(isTransientRpcInterruptionMessage("All fibers interrupted without error")).toBe(true);
+    expect(isTransientRpcInterruptionMessage("Request was aborted")).toBe(true);
+    expect(isTransientRpcInterruptionMessage("Turn failed")).toBe(false);
   });
 
   it("preserves non-transport thread errors", () => {

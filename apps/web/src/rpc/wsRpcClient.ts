@@ -13,7 +13,7 @@ import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
 import { Duration, Effect, Stream } from "effect";
 
 import { type WsRpcProtocolClient } from "./protocol";
-import { resetWsReconnectBackoff } from "./wsConnectionState";
+import { resetWsReconnectBackoff, setBrowserOnlineStatus } from "./wsConnectionState";
 import { WsTransport } from "./wsTransport";
 
 type RpcTag = keyof WsRpcProtocolClient & string;
@@ -283,6 +283,11 @@ function startHeartbeat(transport: WsTransport): { readonly stop: () => void } {
     if (stopped || inFlight || reconnecting) {
       return;
     }
+    if (!isBrowserOnline()) {
+      consecutiveFailures = 0;
+      setBrowserOnlineStatus(false);
+      return;
+    }
 
     inFlight = true;
     try {
@@ -297,6 +302,12 @@ function startHeartbeat(transport: WsTransport): { readonly stop: () => void } {
       );
       consecutiveFailures = 0;
     } catch {
+      if (!isBrowserOnline()) {
+        consecutiveFailures = 0;
+        setBrowserOnlineStatus(false);
+        return;
+      }
+
       consecutiveFailures += 1;
       if (consecutiveFailures < HEARTBEAT_FAILURES_BEFORE_RECONNECT || stopped) {
         return;
@@ -327,4 +338,8 @@ function startHeartbeat(transport: WsTransport): { readonly stop: () => void } {
       clearInterval(intervalId);
     },
   };
+}
+
+function isBrowserOnline(): boolean {
+  return typeof navigator === "undefined" || navigator.onLine !== false;
 }

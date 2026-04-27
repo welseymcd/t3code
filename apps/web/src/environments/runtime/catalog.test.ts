@@ -50,6 +50,8 @@ describe("environment runtime catalog stores", () => {
       wsBaseUrl: "wss://remote.example.com/",
       createdAt: "2026-04-09T00:00:00.000Z",
       lastConnectedAt: null,
+      source: "manual",
+      lastSyncedAt: null,
     });
 
     expect(useSavedEnvironmentRegistryStore.getState().byId[environmentId]).toBeDefined();
@@ -88,6 +90,8 @@ describe("environment runtime catalog stores", () => {
         wsBaseUrl: "wss://remote.example.com/",
         createdAt: "2026-04-09T00:00:00.000Z",
         lastConnectedAt: null,
+        source: "manual",
+        lastSyncedAt: null,
       }),
     ).not.toThrow();
 
@@ -127,6 +131,8 @@ describe("environment runtime catalog stores", () => {
       wsBaseUrl: "wss://remote.example.com/",
       createdAt: "2026-04-09T00:00:00.000Z",
       lastConnectedAt: null,
+      source: "manual" as const,
+      lastSyncedAt: null,
     } as const;
 
     useSavedEnvironmentRegistryStore.getState().upsert(record);

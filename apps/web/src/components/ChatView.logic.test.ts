@@ -14,6 +14,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveProviderSessionFailure,
   resolveSendEnvMode,
+  resolveVisibleThreadError,
   shouldAutoRecoverDeletedWorktree,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
@@ -158,6 +159,41 @@ describe("isSessionStoppedError", () => {
   it("ignores other errors", () => {
     expect(isSessionStoppedError(null)).toBe(false);
     expect(isSessionStoppedError("Session exited unexpectedly")).toBe(false);
+  });
+});
+
+describe("resolveVisibleThreadError", () => {
+  it("hides graceful session stop copy", () => {
+    expect(
+      resolveVisibleThreadError({
+        providerSessionFailure: null,
+        threadError: "Session stopped",
+      }),
+    ).toBeNull();
+  });
+
+  it("hides thread errors while a provider session failure banner is active", () => {
+    expect(
+      resolveVisibleThreadError({
+        providerSessionFailure: {
+          provider: "codex",
+          reason: "codex app-server exited (code=null, signal=SIGBUS).",
+          title: "Codex backend stopped unexpectedly",
+          description:
+            "The backend stopped before the active turn finished. Restart the session or send again when ready.",
+        },
+        threadError: "Some thread error",
+      }),
+    ).toBeNull();
+  });
+
+  it("shows other thread errors", () => {
+    expect(
+      resolveVisibleThreadError({
+        providerSessionFailure: null,
+        threadError: "Select a base branch before sending in New worktree mode.",
+      }),
+    ).toBe("Select a base branch before sending in New worktree mode.");
   });
 });
 

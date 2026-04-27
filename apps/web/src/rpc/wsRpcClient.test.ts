@@ -17,6 +17,7 @@ vi.mock("./wsTransport", () => ({
 
 import { createWsRpcClient } from "./wsRpcClient";
 import { type WsTransport } from "./wsTransport";
+import { getWsConnectionStatus, resetWsConnectionStateForTests } from "./wsConnectionState";
 
 const baseLocalStatus: GitStatusLocalResult = {
   isRepo: true,
@@ -36,7 +37,9 @@ const baseRemoteStatus: GitStatusRemoteResult = {
 
 describe("wsRpcClient", () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.useRealTimers();
+    resetWsConnectionStateForTests();
   });
 
   it("reduces git status stream events into flat status snapshots", async () => {
@@ -127,6 +130,30 @@ describe("wsRpcClient", () => {
 
     expect(transport.request).toHaveBeenCalledTimes(2);
     expect(transport.reconnect).toHaveBeenCalledTimes(1);
+    await client.dispose();
+  });
+
+  it("pauses heartbeat pings and reconnects while the browser is offline", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("navigator", { onLine: false });
+    const request = vi.fn(async () => undefined);
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      request: request as unknown as WsTransport["request"],
+      requestStream: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    } satisfies Pick<
+      WsTransport,
+      "dispose" | "reconnect" | "request" | "requestStream" | "subscribe"
+    >;
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+
+    await vi.advanceTimersByTimeAsync(45_000);
+
+    expect(request).not.toHaveBeenCalled();
+    expect(transport.reconnect).not.toHaveBeenCalled();
+    expect(getWsConnectionStatus().online).toBe(false);
     await client.dispose();
   });
 });

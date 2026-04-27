@@ -50,13 +50,16 @@ describe("projectScripts helpers", () => {
 
   it("builds default runtime env for scripts", () => {
     const env = projectScriptRuntimeEnv({
-      project: { cwd: "/repo" },
+      project: { cwd: "/repo", name: "Test Ground" },
       worktreePath: "/repo/worktree-a",
     });
 
     expect(env).toMatchObject({
       T3CODE_PROJECT_ROOT: "/repo",
       T3CODE_WORKTREE_PATH: "/repo/worktree-a",
+      T3CODE_DEV_HOSTNAME: "test-ground.rmcd.fyi",
+      T3CODE_DEV_PUBLIC_ORIGIN: "https://test-ground.rmcd.fyi",
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: "test-ground.rmcd.fyi",
     });
   });
 
@@ -65,11 +68,13 @@ describe("projectScripts helpers", () => {
       project: { cwd: "/repo" },
       extraEnv: {
         T3CODE_PROJECT_ROOT: "/custom-root",
+        __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: "custom.example.test",
         CUSTOM_FLAG: "1",
       },
     });
 
     expect(env.T3CODE_PROJECT_ROOT).toBe("/custom-root");
+    expect(env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS).toBe("custom.example.test");
     expect(env.CUSTOM_FLAG).toBe("1");
     expect(env.T3CODE_WORKTREE_PATH).toBeUndefined();
   });

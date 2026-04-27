@@ -131,6 +131,8 @@ export interface DesktopEnvironmentBootstrap {
   bootstrapToken?: string;
 }
 
+export type PersistedSavedEnvironmentSource = "manual" | "r-auth";
+
 export interface PersistedSavedEnvironmentRecord {
   environmentId: EnvironmentId;
   label: string;
@@ -138,6 +140,8 @@ export interface PersistedSavedEnvironmentRecord {
   httpBaseUrl: string;
   createdAt: string;
   lastConnectedAt: string | null;
+  source?: PersistedSavedEnvironmentSource;
+  lastSyncedAt?: string | null;
 }
 
 export type DesktopServerExposureMode = "local-only" | "network-accessible";

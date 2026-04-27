@@ -1,4 +1,4 @@
-import { MailIcon, PlusIcon, QrCodeIcon } from "lucide-react";
+import { CloudUploadIcon, MailIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AuthClientSession,
@@ -66,8 +66,11 @@ import {
   addSavedEnvironment,
   getPrimaryEnvironmentConnection,
   reconnectSavedEnvironment,
+  registerPrimaryEnvironmentWithRAuth,
+  registerSavedEnvironmentWithRAuth,
   removeSavedEnvironment,
 } from "~/environments/runtime";
+import { syncAuthorizedSavedEnvironments, useRAuthSyncStore } from "~/rAuth/sync";
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -763,16 +766,20 @@ const PairingClientsList = memo(function PairingClientsList({
 type SavedBackendListRowProps = {
   environmentId: EnvironmentId;
   reconnectingEnvironmentId: EnvironmentId | null;
+  registeringEnvironmentId: EnvironmentId | null;
   removingEnvironmentId: EnvironmentId | null;
   onReconnect: (environmentId: EnvironmentId) => void;
+  onRegisterWithRAuth: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
 };
 
 function SavedBackendListRow({
   environmentId,
   reconnectingEnvironmentId,
+  registeringEnvironmentId,
   removingEnvironmentId,
   onReconnect,
+  onRegisterWithRAuth,
   onRemove,
 }: SavedBackendListRowProps) {
   const nowMs = useRelativeTimeTick(1_000);
@@ -796,6 +803,7 @@ function SavedBackendListRow({
   const descriptorLabel = runtime?.descriptor?.label ?? null;
   const statusTooltip = getSavedBackendStatusTooltip(runtime, record, nowMs);
   const metadataBits = [
+    record.source === "r-auth" ? "Synced from r-auth" : "Manual",
     roleLabel,
     record.lastConnectedAt
       ? `Last connected ${formatAccessTimestamp(record.lastConnectedAt)}`
@@ -834,12 +842,23 @@ function SavedBackendListRow({
           </Button>
           <Button
             size="xs"
-            variant="destructive-outline"
-            disabled={removingEnvironmentId === environmentId}
-            onClick={() => void onRemove(environmentId)}
+            variant="outline"
+            disabled={registeringEnvironmentId === environmentId}
+            onClick={() => void onRegisterWithRAuth(environmentId)}
           >
-            {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
+            <CloudUploadIcon className="size-3" />
+            {registeringEnvironmentId === environmentId ? "Saving…" : "Save to r-auth"}
           </Button>
+          {record.source === "manual" ? (
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              disabled={removingEnvironmentId === environmentId}
+              onClick={() => void onRemove(environmentId)}
+            >
+              {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>
@@ -895,12 +914,22 @@ export function ConnectionsSettings() {
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [reconnectingSavedEnvironmentId, setReconnectingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
+  const [registeringSavedEnvironmentId, setRegisteringSavedEnvironmentId] =
+    useState<EnvironmentId | null>(null);
+  const [isRegisteringCurrentBackendWithRAuth, setIsRegisteringCurrentBackendWithRAuth] =
+    useState(false);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [pendingDesktopServerExposureMode, setPendingDesktopServerExposureMode] = useState<
     DesktopServerExposureState["mode"] | null
   >(null);
+  const rAuthSessionState = useRAuthSyncStore((state) => state.sessionState);
+  const rAuthUser = useRAuthSyncStore((state) => state.user);
+  const rAuthLastSyncedAt = useRAuthSyncStore((state) => state.lastSyncedAt);
+  const rAuthSyncedEnvironmentCount = useRAuthSyncStore((state) => state.syncedEnvironmentCount);
+  const rAuthIsSyncing = useRAuthSyncStore((state) => state.isSyncing);
+  const rAuthLastError = useRAuthSyncStore((state) => state.lastError);
   const canManageLocalBackend = currentSessionRole === "owner";
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
@@ -1091,6 +1120,77 @@ export function ConnectionsSettings() {
       );
     } finally {
       setRemovingSavedEnvironmentId(null);
+    }
+  }, []);
+
+  const handleRegisterSavedBackendWithRAuth = useCallback(async (environmentId: EnvironmentId) => {
+    setRegisteringSavedEnvironmentId(environmentId);
+    setSavedBackendError(null);
+    try {
+      await registerSavedEnvironmentWithRAuth(environmentId);
+      toastManager.add({
+        type: "success",
+        title: "Saved to r-auth",
+        description: "This environment is now available to other signed-in clients.",
+      });
+      await syncAuthorizedSavedEnvironments();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save environment.";
+      setSavedBackendError(message);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not save to r-auth",
+          description: message,
+        }),
+      );
+    } finally {
+      setRegisteringSavedEnvironmentId(null);
+    }
+  }, []);
+
+  const handleRegisterCurrentBackendWithRAuth = useCallback(async () => {
+    setIsRegisteringCurrentBackendWithRAuth(true);
+    setSavedBackendError(null);
+    try {
+      await registerPrimaryEnvironmentWithRAuth({
+        role: currentSessionRole,
+      });
+      toastManager.add({
+        type: "success",
+        title: "Saved to r-auth",
+        description: "This backend is now available to other signed-in clients.",
+      });
+      await syncAuthorizedSavedEnvironments();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save backend.";
+      setSavedBackendError(message);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not save to r-auth",
+          description: message,
+        }),
+      );
+    } finally {
+      setIsRegisteringCurrentBackendWithRAuth(false);
+    }
+  }, [currentSessionRole]);
+
+  const handleSyncAuthorizedServers = useCallback(async () => {
+    setSavedBackendError(null);
+    try {
+      await syncAuthorizedSavedEnvironments();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to sync authorized servers.";
+      setSavedBackendError(message);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not sync authorized servers",
+          description: message,
+        }),
+      );
     }
   }, []);
 
@@ -1376,6 +1476,51 @@ export function ConnectionsSettings() {
         </SettingsSection>
       )}
 
+      <SettingsSection title="r-auth sync">
+        <SettingsRow
+          title={
+            rAuthSessionState === "authenticated"
+              ? `Signed in as ${rAuthUser?.email ?? "user"}`
+              : rAuthSessionState === "signed-out"
+                ? "Not signed in"
+                : "Checking session"
+          }
+          description={
+            rAuthSessionState === "authenticated"
+              ? `${rAuthSyncedEnvironmentCount} authorized server${rAuthSyncedEnvironmentCount === 1 ? "" : "s"} synced${
+                  rAuthLastSyncedAt
+                    ? ` · Last sync ${formatAccessTimestamp(rAuthLastSyncedAt)}`
+                    : ""
+                }`
+              : "Authorized servers from auth.rmcd.cc will be synced into this client when the browser has an active r-auth session."
+          }
+          status={
+            rAuthLastError ? <span className="block text-destructive">{rAuthLastError}</span> : null
+          }
+          control={
+            <div className="flex items-center gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isRegisteringCurrentBackendWithRAuth}
+                onClick={() => void handleRegisterCurrentBackendWithRAuth()}
+              >
+                <CloudUploadIcon className="size-3" />
+                {isRegisteringCurrentBackendWithRAuth ? "Saving…" : "Save this backend"}
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={rAuthIsSyncing}
+                onClick={() => void handleSyncAuthorizedServers()}
+              >
+                {rAuthIsSyncing ? "Syncing…" : "Sync now"}
+              </Button>
+            </div>
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection
         title="Remote environments"
         headerAction={
@@ -1521,8 +1666,10 @@ export function ConnectionsSettings() {
             key={environmentId}
             environmentId={environmentId}
             reconnectingEnvironmentId={reconnectingSavedEnvironmentId}
+            registeringEnvironmentId={registeringSavedEnvironmentId}
             removingEnvironmentId={removingSavedEnvironmentId}
             onReconnect={handleReconnectSavedBackend}
+            onRegisterWithRAuth={handleRegisterSavedBackendWithRAuth}
             onRemove={handleRemoveSavedBackend}
           />
         ))}
