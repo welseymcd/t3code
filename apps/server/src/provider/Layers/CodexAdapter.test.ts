@@ -503,7 +503,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         threadId: asThreadId("thread-1"),
         createdAt: new Date().toISOString(),
         method: "session/closed",
-        message: "Session stopped",
+        message: "Session closed",
       };
 
       yield* runtime.emit(event);
@@ -518,7 +518,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         return;
       }
       assert.equal(firstEvent.value.threadId, "thread-1");
-      assert.equal(firstEvent.value.payload.reason, "Session stopped");
+      assert.equal(firstEvent.value.payload.reason, "Session closed");
     }),
   );
 

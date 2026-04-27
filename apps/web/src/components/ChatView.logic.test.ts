@@ -117,7 +117,7 @@ describe("resolveProviderSessionFailure", () => {
     });
   });
 
-  it("ignores graceful session stops", () => {
+  it("ignores graceful session exits", () => {
     expect(
       resolveProviderSessionFailure({
         session: {
@@ -126,7 +126,7 @@ describe("resolveProviderSessionFailure", () => {
           orchestrationStatus: "stopped",
           createdAt: "2026-04-19T18:00:00.000Z",
           updatedAt: "2026-04-19T18:00:10.000Z",
-          lastError: "Session stopped",
+          lastError: "Session closed",
         },
         latestTurn: null,
       }),

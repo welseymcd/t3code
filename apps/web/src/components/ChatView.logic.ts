@@ -251,10 +251,6 @@ export function resolveVisibleThreadError(input: {
   return input.threadError ?? null;
 }
 
-function isGracefulProviderStop(reason: string): boolean {
-  return isSessionStoppedError(reason);
-}
-
 function isUnexpectedProviderExit(reason: string): boolean {
   const normalized = reason.toLowerCase();
   return (
@@ -275,9 +271,6 @@ export function resolveProviderSessionFailure(input: {
   const session = input.session;
   const reason = session?.lastError?.trim();
   if (!session || !reason) {
-    return null;
-  }
-  if (isGracefulProviderStop(reason)) {
     return null;
   }
   if (session.orchestrationStatus !== "stopped" && session.orchestrationStatus !== "error") {

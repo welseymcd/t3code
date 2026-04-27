@@ -856,6 +856,11 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [activeLatestTurn, activeThread?.session],
   );
+  const shouldSuppressStoppedSessionError =
+    providerSessionFailure === null &&
+    activeThread?.session?.orchestrationStatus === "stopped" &&
+    activeThread.error !== null &&
+    activeThread.error === activeThread.session.lastError;
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
@@ -3450,7 +3455,7 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadErrorBanner
         error={resolveVisibleThreadError({
           providerSessionFailure,
-          threadError: activeThread.error,
+          threadError: shouldSuppressStoppedSessionError ? null : activeThread.error,
         })}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
