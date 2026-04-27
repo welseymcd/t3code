@@ -19,6 +19,8 @@ const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   wsBaseUrl: Schema.String,
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
+  source: Schema.optionalKey(Schema.Union([Schema.Literal("manual"), Schema.Literal("r-auth")])),
+  lastSyncedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   bearerToken: Schema.optionalKey(Schema.String),
 });
 type BrowserSavedEnvironmentRecord = typeof BrowserSavedEnvironmentRecordSchema.Type;
@@ -44,6 +46,8 @@ function toPersistedSavedEnvironmentRecord(
     wsBaseUrl: record.wsBaseUrl,
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
+    ...(record.source ? { source: record.source } : {}),
+    ...(record.lastSyncedAt !== undefined ? { lastSyncedAt: record.lastSyncedAt } : {}),
   };
 }
 
@@ -135,6 +139,8 @@ export function writeBrowserSavedEnvironmentRegistry(
             wsBaseUrl: record.wsBaseUrl,
             createdAt: record.createdAt,
             lastConnectedAt: record.lastConnectedAt,
+            ...(record.source ? { source: record.source } : {}),
+            ...(record.lastSyncedAt !== undefined ? { lastSyncedAt: record.lastSyncedAt } : {}),
             bearerToken,
           }
         : toPersistedSavedEnvironmentRecord(record);
@@ -173,6 +179,8 @@ export function writeBrowserSavedEnvironmentSecret(
         wsBaseUrl: record.wsBaseUrl,
         createdAt: record.createdAt,
         lastConnectedAt: record.lastConnectedAt,
+        ...(record.source ? { source: record.source } : {}),
+        ...(record.lastSyncedAt !== undefined ? { lastSyncedAt: record.lastSyncedAt } : {}),
         bearerToken: secret,
       } satisfies BrowserSavedEnvironmentRecord;
     }),

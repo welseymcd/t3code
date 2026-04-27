@@ -8,6 +8,7 @@ import type {
   AuthPairingCredentialResult,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
+  EnvironmentId,
   AuthSessionId,
   AuthSessionState,
 } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import {
   getPairingTokenFromUrl,
   stripPairingTokenFromUrl as stripPairingTokenUrl,
 } from "../../pairingUrl";
+import { issueAuthorizedT3ServerGrant, RAuthHttpError } from "../../rAuth/api";
 
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 import { Data, Predicate } from "effect";
@@ -194,7 +196,9 @@ function isTransientBootstrapError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
+async function bootstrapServerAuth(input?: {
+  readonly environmentId?: EnvironmentId | string | null;
+}): Promise<ServerAuthGateState> {
   const bootstrapCredential = getDesktopBootstrapCredential();
   const currentSession = await fetchSessionState();
   if (currentSession.authenticated) {
@@ -202,6 +206,10 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
   }
 
   if (!bootstrapCredential) {
+    if (await exchangeRAuthGrantForServerSession(input?.environmentId)) {
+      return { status: "authenticated" };
+    }
+
     return {
       status: "requires-auth",
       auth: currentSession.auth,
@@ -218,6 +226,33 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
       auth: currentSession.auth,
       errorMessage: error instanceof Error ? error.message : "Authentication failed.",
     };
+  }
+}
+
+async function exchangeRAuthGrantForServerSession(
+  environmentId: EnvironmentId | string | null | undefined,
+): Promise<boolean> {
+  if (!environmentId) {
+    return false;
+  }
+
+  try {
+    const grant = await issueAuthorizedT3ServerGrant(environmentId);
+    await exchangeBootstrapCredential(grant.credential);
+    await waitForAuthenticatedSessionAfterBootstrap();
+    return true;
+  } catch (error) {
+    if (error instanceof RAuthHttpError && error.status === 401) {
+      return false;
+    }
+
+    if (error instanceof BootstrapHttpError && error.status === 401) {
+      return false;
+    }
+
+    // r-auth is an opportunistic bootstrap path. Network/configuration failures
+    // should not block the normal explicit pairing fallback.
+    return false;
   }
 }
 
@@ -363,7 +398,9 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
   return result.revokedCount ?? 0;
 }
 
-export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+export async function resolveInitialServerAuthGateState(input?: {
+  readonly environmentId?: EnvironmentId | string | null;
+}): Promise<ServerAuthGateState> {
   if (resolvedAuthenticatedGateState?.status === "authenticated") {
     return resolvedAuthenticatedGateState;
   }
@@ -372,7 +409,7 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
     return bootstrapPromise;
   }
 
-  const nextPromise = bootstrapServerAuth();
+  const nextPromise = bootstrapServerAuth(input);
   bootstrapPromise = nextPromise;
   return nextPromise
     .then((result) => {

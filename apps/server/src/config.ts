@@ -56,6 +56,9 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly cloudflareEmailAccountId?: string | undefined;
   readonly cloudflareEmailApiToken?: string | undefined;
   readonly cloudflareEmailFrom?: string | undefined;
+  readonly rAuthIssuer?: string | undefined;
+  readonly rAuthSharedSecret?: string | undefined;
+  readonly rAuthRegistrationToken?: string | undefined;
   readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
@@ -158,6 +161,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           cloudflareEmailAccountId: undefined,
           cloudflareEmailApiToken: undefined,
           cloudflareEmailFrom: undefined,
+          rAuthIssuer: undefined,
+          rAuthSharedSecret: undefined,
+          rAuthRegistrationToken: undefined,
           cwd,
           baseDir,
           ...derivedPaths,

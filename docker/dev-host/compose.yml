@@ -1,0 +1,36 @@
+services:
+  traefik:
+    image: traefik:v3.4
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --log.level=INFO
+    ports:
+      - 127.0.0.1:8088:8080
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - devhost
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN:?Run bun run devhost:setup first}
+    depends_on:
+      - traefik
+    restart: unless-stopped
+    networks:
+      - devhost
+
+networks:
+  devhost:
+    external: true
+    name: ${DEV_HOST_DOCKER_NETWORK:-rmcd-devhost}

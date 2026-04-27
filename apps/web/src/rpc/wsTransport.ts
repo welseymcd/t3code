@@ -1,14 +1,4 @@
-import {
-  Cause,
-  Duration,
-  Effect,
-  Exit,
-  Layer,
-  ManagedRuntime,
-  Option,
-  Scope,
-  Stream,
-} from "effect";
+import { Cause, Duration, Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from "effect";
 import { RpcClient } from "effect/unstable/rpc";
 
 import { ClientTracingLive } from "../observability/clientTracing";
@@ -28,7 +18,7 @@ interface SubscribeOptions {
 }
 
 interface RequestOptions {
-  readonly timeout?: Option.Option<Duration.Input>;
+  readonly timeout?: Duration.Input;
 }
 
 const DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS = Duration.millis(250);
@@ -74,7 +64,16 @@ export class WsTransport {
 
     const session = this.session;
     const client = await session.clientPromise;
-    return await session.runtime.runPromise(Effect.suspend(() => execute(client)));
+    const request = session.runtime.runPromise(Effect.suspend(() => execute(client)));
+    if (typeof _options?.timeout === "undefined") {
+      return await request;
+    }
+
+    return await withTimeout(
+      request,
+      Duration.toMillis(Duration.fromInputUnsafe(_options.timeout)),
+      "WebSocket RPC request timed out.",
+    );
   }
 
   async requestStream<TValue>(
@@ -283,5 +282,20 @@ export class WsTransport {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
   });
 }

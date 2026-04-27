@@ -28,7 +28,7 @@ import {
   terminalRestartsTotal,
   terminalSessionsTotal,
 } from "../../observability/Metrics.ts";
-import { runProcess } from "../../processRunner.ts";
+import { runProcess, type ProcessRunResult } from "../../processRunner.ts";
 import {
   TerminalCwdError,
   TerminalHistoryError,
@@ -75,6 +75,14 @@ class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcess
 
 interface TerminalSubprocessChecker {
   (terminalPid: number): Effect.Effect<boolean, TerminalSubprocessCheckError>;
+}
+
+interface ProcessRunner {
+  (
+    command: string,
+    args: readonly string[],
+    options?: Parameters<typeof runProcess>[2],
+  ): Promise<ProcessRunResult>;
 }
 
 interface ShellCandidate {
@@ -689,6 +697,70 @@ function normalizedRuntimeEnv(
   return Object.fromEntries(entries.toSorted(([left], [right]) => left.localeCompare(right)));
 }
 
+function devContainerConfigCandidates(workspaceFolder: string): ReadonlyArray<string> {
+  return [
+    path.join(workspaceFolder, ".devcontainer", "devcontainer.json"),
+    path.join(workspaceFolder, ".devcontainer.json"),
+  ];
+}
+
+function isPathWithin(candidate: string, parent: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function resolveDevContainerWorkspaceFolder(input: {
+  readonly cwd: string;
+  readonly runtimeEnv: Record<string, string> | null;
+  readonly exists: (path: string) => Effect.Effect<boolean>;
+}): Effect.Effect<string | null> {
+  return Effect.gen(function* () {
+    const projectRoot = input.runtimeEnv?.T3CODE_PROJECT_ROOT?.trim();
+    const candidates = [input.cwd];
+
+    if (projectRoot && isPathWithin(input.cwd, projectRoot)) {
+      candidates.push(projectRoot);
+    }
+
+    for (const candidate of candidates) {
+      const workspaceFolder = path.resolve(candidate);
+      const hasConfig = yield* Effect.forEach(
+        devContainerConfigCandidates(workspaceFolder),
+        (configPath) => input.exists(configPath),
+      ).pipe(Effect.map((results) => results.some(Boolean)));
+
+      if (hasConfig) {
+        return workspaceFolder;
+      }
+    }
+
+    return null;
+  });
+}
+
+function devContainerShellCandidate(
+  candidate: ShellCandidate,
+  workspaceFolder: string,
+): ShellCandidate {
+  return {
+    shell: "devcontainer",
+    args: [
+      "exec",
+      "--workspace-folder",
+      workspaceFolder,
+      candidate.shell,
+      ...(candidate.args ?? []),
+    ],
+  };
+}
+
+function wrapDevContainerShellCandidates(
+  shellCandidates: ReadonlyArray<ShellCandidate>,
+  workspaceFolder: string,
+): ShellCandidate[] {
+  return shellCandidates.map((candidate) => devContainerShellCandidate(candidate, workspaceFolder));
+}
+
 interface TerminalManagerOptions {
   logsDir: string;
   historyLineLimit?: number;
@@ -700,6 +772,7 @@ interface TerminalManagerOptions {
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
+  processRunner?: ProcessRunner;
 }
 
 const makeTerminalManager = Effect.fn("makeTerminalManager")(function* () {
@@ -728,6 +801,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
     const maxRetainedInactiveSessions =
       options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
+    const processRunner = options.processRunner ?? runProcess;
 
     yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
@@ -1385,8 +1459,40 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           Effect.andThen(
             Effect.gen(function* () {
               const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+              const devContainerWorkspaceFolder = yield* resolveDevContainerWorkspaceFolder({
+                cwd: input.cwd,
+                runtimeEnv: session.runtimeEnv,
+                exists: (candidatePath) =>
+                  fileSystem.exists(candidatePath).pipe(Effect.orElseSucceed(() => false)),
+              });
+              const resolvedShellCandidates = devContainerWorkspaceFolder
+                ? wrapDevContainerShellCandidates(shellCandidates, devContainerWorkspaceFolder)
+                : shellCandidates;
+              if (devContainerWorkspaceFolder) {
+                yield* Effect.tryPromise({
+                  try: () =>
+                    processRunner(
+                      "devcontainer",
+                      ["up", "--workspace-folder", devContainerWorkspaceFolder],
+                      {
+                        cwd: devContainerWorkspaceFolder,
+                        timeoutMs: 10 * 60_000,
+                        allowNonZeroExit: false,
+                        maxBufferBytes: 1_048_576,
+                        outputMode: "truncate",
+                      },
+                    ),
+                  catch: (cause) =>
+                    new PtySpawnError({
+                      adapter: "terminal-manager",
+                      message:
+                        cause instanceof Error ? cause.message : "Failed to start devcontainer.",
+                      cause,
+                    }),
+                });
+              }
               const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
-              const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
+              const spawnResult = yield* trySpawn(resolvedShellCandidates, terminalEnv, session);
               ptyProcess = spawnResult.process;
               startedShell = spawnResult.shellLabel;
 

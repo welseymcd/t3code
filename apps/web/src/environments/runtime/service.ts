@@ -28,16 +28,22 @@ import { collectActiveTerminalThreadIds } from "~/lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
 import { projectQueryKeys } from "~/lib/projectReactQuery";
 import { providerQueryKeys } from "~/lib/providerReactQuery";
-import { getPrimaryKnownEnvironment } from "../primary";
+import { getPrimaryKnownEnvironment, resolvePrimaryEnvironmentHttpUrl } from "../primary";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
   fetchRemoteSessionState,
   resolveRemoteWebSocketConnectionUrl,
 } from "../remote/api";
+import {
+  claimAuthorizedT3Server,
+  issueAuthorizedT3ServerGrant,
+  registerAuthorizedT3Server,
+} from "../../rAuth/api";
 import { resolveRemotePairingTarget } from "../remote/target";
 import {
   getSavedEnvironmentRecord,
+  getSavedEnvironmentRuntimeState,
   hasSavedEnvironmentRegistryHydrated,
   listSavedEnvironmentRecords,
   persistSavedEnvironmentRecord,
@@ -491,6 +497,23 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+async function readBackendErrorMessage(
+  response: Response,
+  fallbackMessage: string,
+): Promise<string> {
+  const text = await response.text();
+  if (!text) {
+    return fallbackMessage;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { readonly error?: string };
+    return parsed.error && parsed.error.length > 0 ? parsed.error : text;
+  } catch {
+    return text;
+  }
+}
+
 function setRuntimeConnecting(environmentId: EnvironmentId) {
   useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
     connectionState: "connecting",
@@ -860,6 +883,33 @@ async function refreshSavedEnvironmentMetadata(
   });
 }
 
+async function resolveSavedEnvironmentBearerSession(record: SavedEnvironmentRecord): Promise<{
+  readonly bearerToken: string;
+  readonly role: AuthSessionRole | null;
+}> {
+  if (record.source === "r-auth") {
+    const grant = await issueAuthorizedT3ServerGrant(record.environmentId);
+    const bearerSession = await bootstrapRemoteBearerSession({
+      httpBaseUrl: record.httpBaseUrl,
+      credential: grant.credential,
+    });
+    return {
+      bearerToken: bearerSession.sessionToken,
+      role: bearerSession.role,
+    };
+  }
+
+  const bearerToken = await readSavedEnvironmentBearerToken(record.environmentId);
+  if (!bearerToken) {
+    throw new Error("Saved environment is missing its saved credential. Pair it again.");
+  }
+
+  return {
+    bearerToken,
+    role: null,
+  };
+}
+
 function registerConnection(connection: EnvironmentConnection): EnvironmentConnection {
   const existing = environmentConnections.get(connection.environmentId);
   if (existing && existing !== connection) {
@@ -919,8 +969,24 @@ async function ensureSavedEnvironmentConnection(
     return existing;
   }
 
-  const bearerToken =
-    options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
+  const resolvedBearerSession =
+    options?.bearerToken !== undefined
+      ? {
+          bearerToken: options.bearerToken,
+          role: options.role ?? null,
+        }
+      : await resolveSavedEnvironmentBearerSession(record).catch((error) => {
+          useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+            authState: "requires-auth",
+            role: null,
+            connectionState: "disconnected",
+            lastError:
+              error instanceof Error ? error.message : "Failed to authorize saved environment.",
+            lastErrorAt: isoNow(),
+          });
+          throw error;
+        });
+  const bearerToken = resolvedBearerSession.bearerToken;
   if (!bearerToken) {
     useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
       authState: "requires-auth",
@@ -936,7 +1002,7 @@ async function ensureSavedEnvironmentConnection(
   const knownEnvironment = createKnownEnvironment({
     id: record.environmentId,
     label: record.label,
-    source: "manual",
+    source: record.source === "r-auth" ? "synced" : "manual",
     target: {
       httpBaseUrl: record.httpBaseUrl,
       wsBaseUrl: record.wsBaseUrl,
@@ -973,7 +1039,7 @@ async function ensureSavedEnvironmentConnection(
       record,
       bearerToken,
       client,
-      options?.role ?? null,
+      options?.role ?? resolvedBearerSession.role ?? null,
       options?.serverConfig ?? null,
     );
     return connection;
@@ -1051,6 +1117,12 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
     throw new Error("Saved environment not found.");
   }
 
+  if (record.source === "r-auth") {
+    await disconnectSavedEnvironment(environmentId);
+    await ensureSavedEnvironmentConnection(record);
+    return;
+  }
+
   const connection = environmentConnections.get(environmentId);
   if (!connection) {
     await ensureSavedEnvironmentConnection(record);
@@ -1070,6 +1142,75 @@ export async function removeSavedEnvironment(environmentId: EnvironmentId): Prom
   useSavedEnvironmentRegistryStore.getState().remove(environmentId);
   await removeSavedEnvironmentBearerToken(environmentId);
   await disconnectSavedEnvironment(environmentId);
+}
+
+export async function registerSavedEnvironmentWithRAuth(
+  environmentId: EnvironmentId,
+): Promise<void> {
+  const record = getSavedEnvironmentRecord(environmentId);
+  if (!record) {
+    throw new Error("Saved environment was not found.");
+  }
+
+  const runtime = getSavedEnvironmentRuntimeState(environmentId);
+  const server = await registerAuthorizedT3Server({
+    environmentId,
+    label: record.label,
+    httpBaseUrl: record.httpBaseUrl,
+    wsBaseUrl: record.wsBaseUrl,
+    role: runtime?.role ?? "client",
+  });
+
+  if (!server) {
+    throw new Error("Sign in to r-auth before saving this environment.");
+  }
+}
+
+export async function registerPrimaryEnvironmentWithRAuth(input: {
+  readonly role: AuthSessionRole | null;
+}): Promise<void> {
+  const primaryEnvironment = getPrimaryKnownEnvironment();
+  if (!primaryEnvironment?.environmentId) {
+    throw new Error("Current backend is not ready yet.");
+  }
+
+  if (input.role !== "owner") {
+    throw new Error("Only owner sessions can save this backend to r-auth.");
+  }
+
+  const proofResponse = await fetch(
+    resolvePrimaryEnvironmentHttpUrl("/api/auth/r-auth/claim-proof"),
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        environmentId: primaryEnvironment.environmentId,
+        label: primaryEnvironment.label,
+        httpBaseUrl: primaryEnvironment.target.httpBaseUrl,
+        wsBaseUrl: primaryEnvironment.target.wsBaseUrl,
+      }),
+    },
+  );
+  if (!proofResponse.ok) {
+    throw new Error(
+      await readBackendErrorMessage(proofResponse, "Failed to create r-auth claim proof."),
+    );
+  }
+  const proofPayload = (await proofResponse.json()) as {
+    readonly proof?: string;
+  };
+  if (!proofPayload.proof) {
+    throw new Error("Backend did not return an r-auth claim proof.");
+  }
+
+  const server = await claimAuthorizedT3Server({ proof: proofPayload.proof });
+
+  if (!server) {
+    throw new Error("Sign in to r-auth before saving this backend.");
+  }
 }
 
 export async function addSavedEnvironment(input: {
@@ -1104,6 +1245,8 @@ export async function addSavedEnvironment(input: {
     httpBaseUrl: resolvedTarget.httpBaseUrl,
     createdAt: isoNow(),
     lastConnectedAt: isoNow(),
+    source: "manual",
+    lastSyncedAt: null,
   };
 
   await persistSavedEnvironmentRecord(record);
@@ -1120,6 +1263,8 @@ export async function addSavedEnvironment(input: {
         wsBaseUrl: entry.wsBaseUrl,
         createdAt: entry.createdAt,
         lastConnectedAt: entry.lastConnectedAt,
+        source: entry.source,
+        lastSyncedAt: entry.lastSyncedAt,
       })),
     );
     throw new Error("Unable to persist saved environment credentials.");
@@ -1129,6 +1274,13 @@ export async function addSavedEnvironment(input: {
     role: bearerSession.role,
   });
   useSavedEnvironmentRegistryStore.getState().upsert(record);
+  await registerAuthorizedT3Server({
+    environmentId,
+    label: record.label,
+    httpBaseUrl: record.httpBaseUrl,
+    wsBaseUrl: record.wsBaseUrl,
+    role: bearerSession.role ?? "client",
+  });
   return record;
 }
 

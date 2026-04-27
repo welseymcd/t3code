@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { WsConnectionStatus } from "../rpc/wsConnectionState";
-import { shouldAutoReconnect, shouldRestartStalledReconnect } from "./WebSocketConnectionSurface";
+import {
+  getConnectionProblemToastKind,
+  shouldAutoReconnect,
+  shouldDelayConnectionProblemToast,
+  shouldRestartStalledReconnect,
+  shouldShowRecoveredToast,
+} from "./WebSocketConnectionSurface";
 
 function makeStatus(overrides: Partial<WsConnectionStatus> = {}): WsConnectionStatus {
   return {
@@ -109,5 +115,44 @@ describe("WebSocketConnectionSurface.logic", () => {
         "2026-04-03T20:00:01.000Z",
       ),
     ).toBe(false);
+  });
+
+  it("delays transient disconnect toasts", () => {
+    const reconnectingKind = getConnectionProblemToastKind(
+      makeStatus({
+        disconnectedAt: "2026-04-03T20:00:00.000Z",
+        hasConnected: true,
+        online: true,
+        phase: "disconnected",
+        reconnectAttemptCount: 1,
+        reconnectPhase: "waiting",
+      }),
+    );
+    expect(reconnectingKind).toBe("reconnecting");
+    expect(shouldDelayConnectionProblemToast(reconnectingKind)).toBe(true);
+
+    const exhaustedKind = getConnectionProblemToastKind(
+      makeStatus({
+        disconnectedAt: "2026-04-03T20:00:00.000Z",
+        hasConnected: true,
+        online: true,
+        phase: "disconnected",
+        reconnectAttemptCount: 8,
+        reconnectPhase: "exhausted",
+      }),
+    );
+    expect(exhaustedKind).toBe("exhausted");
+    expect(shouldDelayConnectionProblemToast(exhaustedKind)).toBe(false);
+  });
+
+  it("only shows recovered copy after a connection problem was visible", () => {
+    const input = {
+      previousDisconnectedAt: "2026-04-03T20:00:00.000Z",
+      previousUiState: "reconnecting" as const,
+      uiState: "connected" as const,
+    };
+
+    expect(shouldShowRecoveredToast({ ...input, problemToastWasVisible: false })).toBe(false);
+    expect(shouldShowRecoveredToast({ ...input, problemToastWasVisible: true })).toBe(true);
   });
 });

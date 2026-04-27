@@ -241,6 +241,16 @@ export function isSessionStoppedError(reason: string | null | undefined): boolea
   return reason?.trim().toLowerCase() === "session stopped";
 }
 
+export function resolveVisibleThreadError(input: {
+  providerSessionFailure: ProviderSessionFailure | null;
+  threadError: string | null | undefined;
+}): string | null {
+  if (input.providerSessionFailure || isSessionStoppedError(input.threadError)) {
+    return null;
+  }
+  return input.threadError ?? null;
+}
+
 function isGracefulProviderStop(reason: string): boolean {
   return isSessionStoppedError(reason);
 }

@@ -4,11 +4,14 @@ import { Effect, Layer } from "effect";
 
 import type { ServerConfigShape } from "../../config.ts";
 import { ServerConfig } from "../../config.ts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
 import { BootstrapCredentialError } from "../Services/BootstrapCredentialService.ts";
 import { ServerAuth, type ServerAuthShape } from "../Services/ServerAuth.ts";
 import { ServerAuthLive, toBootstrapExchangeAuthError } from "./ServerAuth.ts";
 import { ServerSecretStoreLive } from "./ServerSecretStore.ts";
+import { base64UrlEncode, signPayload } from "../utils.ts";
 
 const makeServerConfigLayer = (overrides?: Partial<ServerConfigShape>) =>
   Layer.effect(
@@ -26,6 +29,12 @@ const makeServerAuthLayer = (overrides?: Partial<ServerConfigShape>) =>
   ServerAuthLive.pipe(
     Layer.provide(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStoreLive),
+    Layer.provide(
+      Layer.succeed(ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-test")),
+        getDescriptor: Effect.die("unused"),
+      }),
+    ),
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 
@@ -45,6 +54,40 @@ const requestMetadata = {
   browser: "Chrome",
   ipAddress: "192.168.1.23",
 };
+
+function createExternalGrantToken(input: {
+  readonly issuer: string;
+  readonly environmentId: string;
+  readonly secret: string;
+  readonly subject: string;
+  readonly role: "owner" | "client";
+  readonly email: string;
+  readonly name: string;
+}) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = base64UrlEncode(
+    JSON.stringify({
+      alg: "HS256",
+      typ: "t3-grant",
+    }),
+  );
+  const claims = base64UrlEncode(
+    JSON.stringify({
+      v: 1,
+      iss: input.issuer,
+      aud: input.environmentId,
+      sub: input.subject,
+      role: input.role,
+      email: input.email,
+      name: input.name,
+      iat: nowSeconds,
+      exp: nowSeconds + 300,
+    }),
+  );
+  const signingInput = `${header}.${claims}`;
+  const signature = signPayload(signingInput, new TextEncoder().encode(input.secret));
+  return `${signingInput}.${signature}`;
+}
 
 it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
   it.effect("maps invalid bootstrap credential failures to 401", () =>
@@ -175,6 +218,43 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       Effect.provide(
         makeServerAuthLayer({
           desktopBootstrapToken: "desktop-bootstrap-token",
+        }),
+      ),
+    ),
+  );
+
+  it.effect("accepts a signed external auth grant as a bootstrap credential", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+      const credential = createExternalGrantToken({
+        issuer: "https://auth.example.com",
+        environmentId: "environment-test",
+        secret: "test-shared-secret-that-is-long-enough",
+        subject: "user_1",
+        role: "client",
+        email: "ross@example.com",
+        name: "Ross",
+      });
+
+      const exchanged = yield* serverAuth.exchangeBootstrapCredentialForBearerSession(
+        credential,
+        requestMetadata,
+      );
+      const verified = yield* serverAuth.authenticateHttpRequest({
+        cookies: {},
+        headers: {
+          authorization: `Bearer ${exchanged.sessionToken}`,
+        },
+      } as never);
+
+      expect(exchanged.role).toBe("client");
+      expect(verified.role).toBe("client");
+      expect(verified.subject).toBe("r-auth:user_1");
+    }).pipe(
+      Effect.provide(
+        makeServerAuthLayer({
+          rAuthIssuer: "https://auth.example.com",
+          rAuthSharedSecret: "test-shared-secret-that-is-long-enough",
         }),
       ),
     ),

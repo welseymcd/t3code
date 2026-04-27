@@ -46,6 +46,7 @@ We are very very early in this project. Expect bugs.
 We are not accepting contributions yet.
 
 Observability guide: [docs/observability.md](./docs/observability.md)
+Dev host guide: [docs/dev-host.md](./docs/dev-host.md)
 
 ## If you REALLY want to contribute still.... read this first
 

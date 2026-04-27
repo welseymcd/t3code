@@ -1700,6 +1700,62 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("syncs file explorer project data from the sidebar refresh button", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.projectsListDirectory) {
+          return {
+            entries: [],
+            truncated: false,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const sidebar = await waitForElement(
+        () => document.querySelector("aside"),
+        "Unable to find file explorer sidebar.",
+      );
+      (sidebar as HTMLElement).dispatchEvent(
+        new MouseEvent("mouseenter", {
+          bubbles: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.filter((request) => request._tag === WS_METHODS.projectsListDirectory),
+          ).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const syncButton = await waitForElement(
+        () => document.querySelector('button[aria-label="Sync file explorer"]'),
+        "Unable to find file explorer sync button.",
+      );
+      (syncButton as HTMLButtonElement).click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.filter((request) => request._tag === WS_METHODS.projectsListDirectory),
+          ).toHaveLength(2);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the project cwd for draft threads without a worktree path", async () => {
     setDraftThreadWithoutWorktree();
 
@@ -4436,14 +4492,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect.element(palette).toBeInTheDocument();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
-      await expect.element(browseInput).toHaveValue("~/");
+      await expect.element(browseInput).toHaveValue("~/Development/");
 
       await vi.waitFor(
         () => {
           expect(
             wsRequests.some(
               (request) =>
-                request._tag === WS_METHODS.filesystemBrowse && request.partialPath === "~/",
+                request._tag === WS_METHODS.filesystemBrowse &&
+                request.partialPath === "~/Development/",
             ),
           ).toBe(true);
         },
@@ -4731,6 +4788,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
         wsBaseUrl: "wss://staging.example.test/ws",
         createdAt: NOW_ISO,
         lastConnectedAt: NOW_ISO,
+        source: "manual",
+        lastSyncedAt: null,
       });
       useSavedEnvironmentRuntimeStore.getState().patch(REMOTE_ENVIRONMENT_ID, {
         connectionState: "connected",

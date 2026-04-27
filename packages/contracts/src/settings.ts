@@ -37,6 +37,7 @@ export const DEFAULT_FILE_VIEWER_MODE: FileViewerMode = "internal";
 export const PlanSidebarAutoOpenMode = Schema.Literals(["default", "on_update", "manual"]);
 export type PlanSidebarAutoOpenMode = typeof PlanSidebarAutoOpenMode.Type;
 export const DEFAULT_PLAN_SIDEBAR_AUTO_OPEN_MODE: PlanSidebarAutoOpenMode = "default";
+export const DEFAULT_ADD_PROJECT_BASE_DIRECTORY_FALLBACK = "~/Development";
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),

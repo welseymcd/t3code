@@ -48,6 +48,7 @@ import {
   getPrimaryEnvironmentConnection,
   startEnvironmentConnectionService,
 } from "../environments/runtime";
+import { startRAuthEnvironmentSyncService } from "../rAuth/sync";
 import { configureClientTracing } from "../observability/clientTracing";
 import {
   ensurePrimaryEnvironmentReady,
@@ -59,10 +60,10 @@ export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
   beforeLoad: async () => {
-    const [, authGateState] = await Promise.all([
-      ensurePrimaryEnvironmentReady(),
-      resolveInitialServerAuthGateState(),
-    ]);
+    const descriptor = await ensurePrimaryEnvironmentReady();
+    const authGateState = await resolveInitialServerAuthGateState({
+      environmentId: descriptor.environmentId,
+    });
     return {
       authGateState,
     };
@@ -100,6 +101,7 @@ function RootRouteView() {
         <AuthenticatedTracingBootstrap />
         <ServerStateBootstrap />
         <EnvironmentConnectionManagerBootstrap />
+        <RAuthSyncBootstrap />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
@@ -206,6 +208,14 @@ function EnvironmentConnectionManagerBootstrap() {
   useEffect(() => {
     return startEnvironmentConnectionService(queryClient);
   }, [queryClient]);
+
+  return null;
+}
+
+function RAuthSyncBootstrap() {
+  useEffect(() => {
+    return startRAuthEnvironmentSyncService();
+  }, []);
 
   return null;
 }

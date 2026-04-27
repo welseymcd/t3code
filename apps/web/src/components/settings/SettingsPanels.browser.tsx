@@ -155,6 +155,8 @@ vi.mock("../../environments/runtime", () => {
     getPrimaryEnvironmentConnection: () => primaryConnection,
     readEnvironmentConnection: () => primaryConnection,
     reconnectSavedEnvironment: vi.fn(),
+    registerPrimaryEnvironmentWithRAuth: vi.fn(),
+    registerSavedEnvironmentWithRAuth: vi.fn(),
     removeSavedEnvironment: vi.fn(),
     requireEnvironmentConnection: () => primaryConnection,
     resetEnvironmentServiceForTests: () => undefined,

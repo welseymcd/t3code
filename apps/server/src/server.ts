@@ -6,6 +6,7 @@ import {
   attachmentsRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
+  rAuthProxyRouteLayer,
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
@@ -62,6 +63,7 @@ import {
   authPairingLinksEmailRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authRAuthClaimProofRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
 } from "./auth/http.ts";
@@ -218,6 +220,7 @@ const WorkspaceLayerLive = Layer.mergeAll(
 const AuthLayerLive = ServerAuthLive.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerSecretStoreLive),
+  Layer.provide(ServerEnvironmentLive),
 );
 
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
@@ -262,6 +265,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   authPairingLinksEmailRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authRAuthClaimProofRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   attachmentsRouteLayer,
@@ -269,6 +273,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   orchestrationSnapshotRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
+  rAuthProxyRouteLayer,
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,

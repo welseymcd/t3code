@@ -1,19 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCwIcon, ChevronRightIcon, PinIcon } from "lucide-react";
 import { useOpenWorkspaceFile } from "../hooks/useOpenWorkspaceFile";
-import { openInPreferredEditor } from "../editorPreferences";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { projectListDirectoryQueryOptions } from "../lib/projectReactQuery";
 import { cn } from "../lib/utils";
-import { readLocalApi } from "../localApi";
+import { getWsConnectionUiState, useWsConnectionStatus } from "../rpc/wsConnectionState";
 import { basenameOfPath } from "../vscode-icons";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
+import {
+  resolveFileExplorerErrorPresentation,
+  isUnsupportedDirectoryListingError,
+  shouldAutoRefreshFileExplorerOnReconnect,
+} from "./FileExplorerSidebar.logic";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { Skeleton } from "./ui/skeleton";
-import { ChevronRightIcon, ExternalLinkIcon, PinIcon } from "lucide-react";
 
 const FILE_EXPLORER_PINNED_STORAGE_KEY = "chat_file_explorer_pinned";
 const FILE_EXPLORER_WIDTH_CLASS = "w-[22rem]";
@@ -39,25 +43,18 @@ function renderTreeIndent(depth: number): number {
   return 12 + depth * 14;
 }
 
-function describeQueryError(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string" &&
-    error.message.trim().length > 0
-  ) {
-    return error.message;
-  }
-  return "Could not load this directory.";
-}
-
-function isUnsupportedDirectoryListingError(error: unknown): boolean {
-  const message = describeQueryError(error);
-  return message.includes("Unknown request tag: projects.listDirectory");
+function isFileExplorerDirectoryQueryKey(input: {
+  readonly environmentId: EnvironmentId;
+  readonly queryKey: unknown;
+  readonly workspaceRoot: string;
+}): boolean {
+  return (
+    Array.isArray(input.queryKey) &&
+    input.queryKey[0] === "projects" &&
+    input.queryKey[1] === "list-directory" &&
+    input.queryKey[2] === input.environmentId &&
+    input.queryKey[3] === input.workspaceRoot
+  );
 }
 
 const DirectorySkeletonRows = memo(function DirectorySkeletonRows({ depth }: { depth: number }) {
@@ -81,6 +78,7 @@ const DirectoryListing = memo(function DirectoryListing(props: {
   depth: number;
   enabled: boolean;
   environmentId: EnvironmentId;
+  connectionUiState: ReturnType<typeof getWsConnectionUiState>;
   expandedDirectories: ReadonlySet<string>;
   onUnsupported: () => void;
   onOpenFile: (relativePath: string) => void;
@@ -121,12 +119,19 @@ const DirectoryListing = memo(function DirectoryListing(props: {
         </div>
       );
     }
+    const errorPresentation = resolveFileExplorerErrorPresentation({
+      connectionUiState: props.connectionUiState,
+      error: query.error,
+    });
     return (
       <div
-        className="px-3 py-3 text-[11px] leading-relaxed text-destructive/90"
+        className={cn(
+          "px-3 py-3 text-[11px] leading-relaxed",
+          errorPresentation.tone === "warning" ? "text-warning" : "text-destructive/90",
+        )}
         style={{ paddingLeft: `${renderTreeIndent(props.depth)}px` }}
       >
-        {describeQueryError(query.error)}
+        {errorPresentation.message}
       </div>
     );
   }
@@ -181,6 +186,7 @@ const DirectoryListing = memo(function DirectoryListing(props: {
               </button>
               {isDirectory && isExpanded ? (
                 <DirectoryListing
+                  connectionUiState={props.connectionUiState}
                   depth={props.depth + 1}
                   enabled={props.enabled}
                   environmentId={props.environmentId}
@@ -211,6 +217,8 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
 }) {
+  const queryClient = useQueryClient();
+  const wsConnectionStatus = useWsConnectionStatus();
   const openWorkspaceFile = useOpenWorkspaceFile();
   const [pinned, setPinned] = useLocalStorage(
     FILE_EXPLORER_PINNED_STORAGE_KEY,
@@ -220,7 +228,10 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set());
   const [directoryListingSupported, setDirectoryListingSupported] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const closeTimeoutRef = useRef<number | null>(null);
+  const connectionUiState = getWsConnectionUiState(wsConnectionStatus);
+  const previousConnectionUiStateRef = useRef(connectionUiState);
 
   const clearPendingClose = useCallback(() => {
     if (closeTimeoutRef.current !== null) {
@@ -288,20 +299,56 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
     },
     [openWorkspaceFile, props.environmentId, props.workspaceRoot],
   );
-  const handleOpenWorkspace = useCallback(() => {
+  const handleRefreshWorkspace = useCallback(() => {
     if (!props.workspaceRoot) {
       return;
     }
-    const api = readLocalApi();
-    if (!api) {
-      return;
-    }
-    void openInPreferredEditor(api, props.workspaceRoot);
-  }, [props.workspaceRoot]);
+    const workspaceRoot = props.workspaceRoot;
+    setIsRefreshing(true);
+    void queryClient
+      .invalidateQueries({
+        predicate: (query) =>
+          isFileExplorerDirectoryQueryKey({
+            environmentId: props.environmentId,
+            queryKey: query.queryKey,
+            workspaceRoot,
+          }),
+        refetchType: "active",
+      })
+      .finally(() => {
+        setIsRefreshing(false);
+      });
+  }, [props.environmentId, props.workspaceRoot, queryClient]);
   const headerDescription = useMemo(
     () => props.workspaceRoot?.replaceAll("\\", "/") ?? null,
     [props.workspaceRoot],
   );
+
+  useEffect(() => {
+    const previousConnectionUiState = previousConnectionUiStateRef.current;
+    const workspaceRoot = props.workspaceRoot;
+
+    if (
+      workspaceRoot &&
+      shouldAutoRefreshFileExplorerOnReconnect({
+        nextConnectionUiState: connectionUiState,
+        previousConnectionUiState,
+        workspaceRoot,
+      })
+    ) {
+      void queryClient.invalidateQueries({
+        predicate: (query) =>
+          isFileExplorerDirectoryQueryKey({
+            environmentId: props.environmentId,
+            queryKey: query.queryKey,
+            workspaceRoot,
+          }),
+        refetchType: "active",
+      });
+    }
+
+    previousConnectionUiStateRef.current = connectionUiState;
+  }, [connectionUiState, props.environmentId, props.workspaceRoot, queryClient]);
 
   return (
     <>
@@ -339,13 +386,14 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
             <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
-                size="xs"
+                size="icon-xs"
                 variant="outline"
-                disabled={!hasWorkspace}
-                onClick={handleOpenWorkspace}
+                disabled={!hasWorkspace || isRefreshing}
+                aria-label="Sync file explorer"
+                title="Sync file explorer"
+                onClick={handleRefreshWorkspace}
               >
-                <ExternalLinkIcon className="size-3.5" />
-                Open
+                <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
               </Button>
               <Button
                 type="button"
@@ -371,6 +419,7 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
           <ScrollArea className="min-h-0 flex-1">
             {props.workspaceRoot ? (
               <DirectoryListing
+                connectionUiState={connectionUiState}
                 depth={0}
                 enabled={open && directoryListingSupported}
                 environmentId={props.environmentId}

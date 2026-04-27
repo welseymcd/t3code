@@ -204,6 +204,12 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 const authTestLayer = ServerAuthLive.pipe(
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(ServerSecretStoreLive),
+  Layer.provide(
+    Layer.succeed(ServerEnvironment, {
+      getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
+      getDescriptor: Effect.succeed(testEnvironmentDescriptor),
+    } satisfies ServerEnvironmentShape),
+  ),
 );
 
 const makeBrowserOtlpPayload = (spanName: string) =>
@@ -1018,6 +1024,80 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("proxies r-auth t3 server requests through the same-origin API route", () =>
+    Effect.gen(function* () {
+      const upstream = yield* Effect.acquireRelease(
+        Effect.promise(async () => {
+          const NodeHttp = await import("node:http");
+
+          return await new Promise<{
+            readonly close: () => Promise<void>;
+            readonly requestPath: Promise<string | undefined>;
+            readonly url: string;
+          }>((resolve, reject) => {
+            let resolveRequestPath: ((path: string | undefined) => void) | undefined;
+            const requestPath = new Promise<string | undefined>((resolvePath) => {
+              resolveRequestPath = resolvePath;
+            });
+
+            const server = NodeHttp.createServer((request, response) => {
+              resolveRequestPath?.(request.url);
+              resolveRequestPath = undefined;
+              response.statusCode = 200;
+              response.setHeader("content-type", "application/json");
+              response.end(JSON.stringify({ ok: true, servers: [] }));
+            });
+
+            server.on("error", reject);
+            server.listen(0, "127.0.0.1", () => {
+              const address = server.address();
+              if (!address || typeof address === "string") {
+                reject(new Error("Expected TCP r-auth upstream address"));
+                return;
+              }
+
+              resolve({
+                url: `http://127.0.0.1:${address.port}`,
+                requestPath,
+                close: () =>
+                  new Promise<void>((resolveClose, rejectClose) => {
+                    server.close((error) => {
+                      if (error) {
+                        rejectClose(error);
+                      } else {
+                        resolveClose();
+                      }
+                    });
+                  }),
+              });
+            });
+          });
+        }),
+        (server) => Effect.promise(() => server.close()),
+      );
+
+      yield* buildAppUnderTest({ config: { rAuthIssuer: upstream.url } });
+
+      const proxyUrl = yield* getHttpServerUrl("/api/r-auth/rest/v1/t3/servers");
+      const response = yield* Effect.promise(() =>
+        fetch(proxyUrl, {
+          headers: {
+            cookie: "r-auth-session=test-session",
+          },
+        }),
+      );
+      const body = (yield* Effect.promise(() => response.json())) as {
+        readonly ok?: boolean;
+        readonly servers?: ReadonlyArray<unknown>;
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(body.ok, true);
+      assert.deepEqual(body.servers, []);
+      assert.equal(yield* Effect.promise(() => upstream.requestPath), "/rest/v1/t3/servers");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("issues authenticated one-time pairing credentials for additional clients", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -1042,6 +1122,53 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const reusedResult = yield* bootstrapBrowserSession(body.credential);
       assert.equal(reusedResult.response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("issues owner-only r-auth backend claim proofs", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          rAuthIssuer: "https://auth.example.com",
+          rAuthRegistrationToken: "test-registration-secret-that-is-long-enough",
+        },
+      });
+
+      const response = yield* HttpClient.post("/api/auth/r-auth/claim-proof", {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          "content-type": "application/json",
+        },
+        body: HttpBody.text(
+          JSON.stringify({
+            environmentId: testEnvironmentDescriptor.environmentId,
+            label: "Test environment",
+            httpBaseUrl: "https://code.example.com/app",
+            wsBaseUrl: "wss://code.example.com/ws",
+          }),
+          "application/json",
+        ),
+      });
+      const body = (yield* response.json) as {
+        readonly ok: boolean;
+        readonly environmentId: string;
+        readonly httpBaseUrl: string;
+        readonly wsBaseUrl: string;
+        readonly proof: string;
+      };
+      const [, encodedClaims] = body.proof.split(".");
+      const claims = JSON.parse(Buffer.from(encodedClaims!, "base64url").toString("utf8")) as {
+        readonly aud: string;
+        readonly environmentId: string;
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(body.ok, true);
+      assert.equal(body.environmentId, testEnvironmentDescriptor.environmentId);
+      assert.equal(body.httpBaseUrl, "https://code.example.com/");
+      assert.equal(body.wsBaseUrl, "wss://code.example.com/");
+      assert.equal(claims.aud, "https://auth.example.com");
+      assert.equal(claims.environmentId, testEnvironmentDescriptor.environmentId);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -2252,9 +2379,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       const stat = yield* fs.stat(missingWorkspaceRoot);
+      const t3codeSettings = yield* fs.readFileString(
+        path.join(missingWorkspaceRoot, ".devcontainer", "t3code.json"),
+      );
+      const devcontainerEnv = yield* fs.readFileString(
+        path.join(missingWorkspaceRoot, ".devcontainer", ".env"),
+      );
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+      assert.include(t3codeSettings, '"hostname": "new-project.rmcd.fyi"');
+      assert.include(devcontainerEnv, "DEV_HOST_PROJECT=new-project");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
