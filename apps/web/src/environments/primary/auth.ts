@@ -184,7 +184,7 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
   });
 }
 
-function isTransientBootstrapError(error: unknown): boolean {
+export function isTransientBootstrapError(error: unknown): boolean {
   if (isBootstrapHttpError(error)) {
     return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
   }

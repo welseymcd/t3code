@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "bun run --parallel dev:bundle dev:electron",
+    "dev": "bun run --parallel dev:server-bundle dev:bundle dev:electron",
+    "dev:server-bundle": "cd ../server && bun run build:bundle --watch",
     "dev:bundle": "tsdown --watch",
     "dev:electron": "node scripts/dev-electron.mjs",
     "build": "tsdown",

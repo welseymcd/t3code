@@ -18,6 +18,7 @@ export {
   createServerPairingCredential,
   emailServerPairingLink,
   fetchSessionState,
+  isTransientBootstrapError,
   listServerClientSessions,
   listServerPairingLinks,
   peekPairingTokenFromUrl,

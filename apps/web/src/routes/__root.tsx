@@ -52,9 +52,12 @@ import { startRAuthEnvironmentSyncService } from "../rAuth/sync";
 import { configureClientTracing } from "../observability/clientTracing";
 import {
   ensurePrimaryEnvironmentReady,
+  isTransientBootstrapError,
   resolveInitialServerAuthGateState,
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
+
+const TRANSIENT_ROOT_ROUTE_RETRY_MS = 500;
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -120,6 +123,21 @@ function RootRouteView() {
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const message = errorMessage(error);
   const details = errorDetails(error);
+  const shouldAutoRetry = isTransientBootstrapError(error);
+
+  useEffect(() => {
+    if (!shouldAutoRetry) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      reset();
+    }, TRANSIENT_ROOT_ROUTE_RETRY_MS);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [reset, shouldAutoRetry]);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">

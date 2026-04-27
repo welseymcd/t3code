@@ -18,7 +18,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
-import { ensureLocalApi } from "~/localApi";
+import { createLocalPersistenceApi, ensureLocalApi } from "~/localApi";
 import { Struct } from "effect";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
@@ -63,7 +63,7 @@ async function hydrateClientSettings(): Promise<void> {
 
   const nextHydration = (async () => {
     try {
-      const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+      const persistedSettings = await createLocalPersistenceApi().getClientSettings();
       if (persistedSettings) {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
@@ -86,8 +86,8 @@ async function hydrateClientSettings(): Promise<void> {
 
 function persistClientSettings(settings: ClientSettings): void {
   replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
+  void createLocalPersistenceApi()
+    .setClientSettings(settings)
     .catch((error) => {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
     });

@@ -1,4 +1,4 @@
-import { CloudUploadIcon, MailIcon, PlusIcon, QrCodeIcon } from "lucide-react";
+import { CloudUploadIcon, LogInIcon, MailIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AuthClientSession,
@@ -71,6 +71,7 @@ import {
   removeSavedEnvironment,
 } from "~/environments/runtime";
 import { syncAuthorizedSavedEnvironments, useRAuthSyncStore } from "~/rAuth/sync";
+import { buildRAuthLoginUrl } from "~/rAuth/api";
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -1320,6 +1321,7 @@ export function ConnectionsSettings() {
     () => desktopPairingLinks.filter((pairingLink) => pairingLink.role === "client"),
     [desktopPairingLinks],
   );
+  const rAuthLoginUrl = useMemo(() => buildRAuthLoginUrl(), []);
   return (
     <SettingsPageContainer>
       {canManageLocalBackend ? (
@@ -1499,6 +1501,19 @@ export function ConnectionsSettings() {
           }
           control={
             <div className="flex items-center gap-2">
+              {desktopBridge && rAuthSessionState !== "authenticated" ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  render={<a href={rAuthLoginUrl} target="_blank" rel="noreferrer" />}
+                  onClick={() => {
+                    useRAuthSyncStore.getState().patch({ sessionState: "unknown" });
+                  }}
+                >
+                  <LogInIcon className="size-3" />
+                  Sign in
+                </Button>
+              ) : null}
               <Button
                 size="xs"
                 variant="outline"

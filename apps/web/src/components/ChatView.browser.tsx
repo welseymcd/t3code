@@ -1756,6 +1756,49 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("opens the file explorer from the header toggle", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.projectsListDirectory) {
+          return {
+            entries: [],
+            truncated: false,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const explorerToggle = page.getByRole("button", {
+        name: "Toggle file explorer",
+      });
+      await expect.element(explorerToggle).toBeInTheDocument();
+      await expect.element(explorerToggle).toHaveAttribute("aria-pressed", "false");
+
+      await explorerToggle.click();
+
+      await expect.element(explorerToggle).toHaveAttribute("aria-pressed", "true");
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.filter((request) => request._tag === WS_METHODS.projectsListDirectory),
+          ).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await explorerToggle.click();
+      await expect.element(explorerToggle).toHaveAttribute("aria-pressed", "false");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the project cwd for draft threads without a worktree path", async () => {
     setDraftThreadWithoutWorktree();
 

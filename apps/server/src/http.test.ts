@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { isLoopbackHostname, resolveDevRedirectUrl, resolveRAuthProxyTargetUrl } from "./http.ts";
+import {
+  isLoopbackHostname,
+  resolveDevRedirectUrl,
+  resolveRAuthDashboardAbsoluteTargetUrl,
+  resolveRAuthProxyTargetUrl,
+  rewriteRAuthProxyLocation,
+  rewriteRAuthProxyTextContent,
+} from "./http.ts";
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
@@ -30,8 +37,80 @@ describe("http dev routing", () => {
       resolveRAuthProxyTargetUrl(
         { rAuthIssuer: "https://auth.example.com" },
         "/api/r-auth/rest/v1/auth/session",
+        "?include=user",
       ),
-    ).toBe("https://auth.example.com/rest/v1/auth/session");
+    ).toBe("https://auth.example.com/rest/v1/auth/session?include=user");
+  });
+
+  it("maps same-origin r-auth login paths to the configured issuer", () => {
+    expect(
+      resolveRAuthProxyTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/api/r-auth/dashboard",
+        "?redirectTo=http%3A%2F%2F127.0.0.1%3A3773%2Fsettings%2Fconnections",
+      ),
+    ).toBe(
+      "https://auth.example.com/dashboard?redirectTo=http%3A%2F%2F127.0.0.1%3A3773%2Fsettings%2Fconnections",
+    );
+  });
+
+  it("maps r-auth dashboard assets to the configured issuer", () => {
+    expect(
+      resolveRAuthProxyTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/api/r-auth/dashboard/assets/index.js",
+      ),
+    ).toBe("https://auth.example.com/dashboard/assets/index.js");
+  });
+
+  it("maps documented r-auth health and tRPC paths to the configured issuer", () => {
+    expect(
+      resolveRAuthProxyTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/api/r-auth/trpc/session.current",
+      ),
+    ).toBe("https://auth.example.com/trpc/session.current");
+    expect(
+      resolveRAuthProxyTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/api/r-auth/rest/v1/health",
+      ),
+    ).toBe("https://auth.example.com/rest/v1/health");
+  });
+
+  it("maps dashboard absolute Better Auth paths to the configured issuer", () => {
+    expect(
+      resolveRAuthDashboardAbsoluteTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/api/auth/get-session",
+      ),
+    ).toBe("https://auth.example.com/api/auth/get-session");
+    expect(
+      resolveRAuthDashboardAbsoluteTargetUrl(
+        { rAuthIssuer: "https://auth.example.com" },
+        "/dashboard/assets/login.js",
+      ),
+    ).toBe("https://auth.example.com/dashboard/assets/login.js");
+  });
+
+  it("rewrites same-issuer r-auth redirects back through the local proxy", () => {
+    expect(
+      rewriteRAuthProxyLocation(
+        { rAuthIssuer: "https://auth.example.com" },
+        "https://auth.example.com/dashboard?tab=t3",
+        "http://127.0.0.1:3773",
+      ),
+    ).toBe("http://127.0.0.1:3773/api/r-auth/dashboard?tab=t3");
+  });
+
+  it("rewrites r-auth dashboard asset and API paths through the local proxy", () => {
+    expect(
+      rewriteRAuthProxyTextContent(
+        `<script src="/dashboard/assets/app.js"></script><script>fetch("/api/auth/session");fetch("/trpc/session.current")</script><link href="/vite.svg">`,
+      ),
+    ).toBe(
+      `<script src="/api/r-auth/dashboard/assets/app.js"></script><script>fetch("/api/r-auth/api/auth/session");fetch("/api/r-auth/trpc/session.current")</script><link href="/api/r-auth/vite.svg">`,
+    );
   });
 
   it("rejects non r-auth proxy paths", () => {

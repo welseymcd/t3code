@@ -113,6 +113,18 @@ export default defineConfig({
               target: devProxyTarget,
               changeOrigin: true,
             },
+            "/dashboard": {
+              target: devProxyTarget,
+              changeOrigin: true,
+            },
+            "/trpc": {
+              target: devProxyTarget,
+              changeOrigin: true,
+            },
+            "/cdn-cgi": {
+              target: devProxyTarget,
+              changeOrigin: true,
+            },
             "/attachments": {
               target: devProxyTarget,
               changeOrigin: true,

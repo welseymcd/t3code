@@ -144,6 +144,7 @@ vi.mock("../../environments/runtime", () => {
     getSavedEnvironmentRuntimeState: () => null,
     hasSavedEnvironmentRegistryHydrated: () => true,
     listSavedEnvironmentRecords: () => [],
+    listSavedEnvironmentRecordsBySource: () => [],
     resetSavedEnvironmentRegistryStoreForTests: () => undefined,
     resetSavedEnvironmentRuntimeStoreForTests: () => undefined,
     resolveEnvironmentHttpUrl: (_environmentId: unknown, path: string) =>
@@ -680,6 +681,24 @@ describe("GeneralSettingsPanel observability", () => {
     await expect
       .element(page.getByText("Reachable at http://192.168.1.44:3773"))
       .toBeInTheDocument();
+  });
+
+  it("shows an r-auth sign-in action in desktop builds", async () => {
+    window.desktopBridge = createDesktopBridgeStub();
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    const signInLink = page.getByRole("link", { name: "Sign in", exact: true });
+    await expect.element(signInLink).toBeInTheDocument();
+    await expect
+      .element(signInLink)
+      .toHaveAttribute("href", expect.stringContaining("/api/r-auth/dashboard?redirectTo="));
   });
 
   it("opens the logs folder in the preferred editor", async () => {

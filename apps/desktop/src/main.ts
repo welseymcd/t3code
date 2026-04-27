@@ -427,6 +427,27 @@ function getSafeExternalUrl(rawUrl: unknown): string | null {
   return parsedUrl.toString();
 }
 
+function isInternalRAuthUrl(candidateUrl: string, ownerUrl: string): boolean {
+  try {
+    const candidate = new URL(candidateUrl);
+    const owner = new URL(ownerUrl);
+    const backendOrigin = backendHttpUrl ? new URL(backendHttpUrl).origin : null;
+    if (candidate.origin !== owner.origin && candidate.origin !== backendOrigin) {
+      return false;
+    }
+
+    return (
+      candidate.pathname.startsWith("/api/r-auth/") ||
+      candidate.pathname.startsWith("/dashboard/") ||
+      candidate.pathname.startsWith("/api/auth/") ||
+      candidate.pathname.startsWith("/trpc/") ||
+      candidate.pathname.startsWith("/cdn-cgi/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
   if (rawTheme === "light" || rawTheme === "dark" || rawTheme === "system") {
     return rawTheme;
@@ -1983,6 +2004,37 @@ function createWindow(): BrowserWindow {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isInternalRAuthUrl(url, window.webContents.getURL())) {
+      const authWindow = new BrowserWindow({
+        width: 760,
+        height: 820,
+        minWidth: 520,
+        minHeight: 620,
+        show: true,
+        autoHideMenuBar: true,
+        backgroundColor: "#ffffff",
+        parent: window,
+        title: "r-auth",
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+      authWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+        const externalUrl = getSafeExternalUrl(popupUrl);
+        if (externalUrl) {
+          void shell.openExternal(externalUrl);
+        }
+        return { action: "deny" };
+      });
+      authWindow.on("closed", () => {
+        window.focus();
+      });
+      void authWindow.loadURL(url);
+      return { action: "deny" };
+    }
+
     const externalUrl = getSafeExternalUrl(url);
     if (externalUrl) {
       void shell.openExternal(externalUrl);

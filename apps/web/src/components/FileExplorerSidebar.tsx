@@ -214,6 +214,7 @@ const DirectoryListing = memo(function DirectoryListing(props: {
 
 export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
   environmentId: EnvironmentId;
+  manualOpen?: boolean;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
 }) {
@@ -270,7 +271,7 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
     setDirectoryListingSupported(true);
   }, [props.environmentId, props.workspaceRoot]);
 
-  const open = pinned || previewOpen;
+  const open = Boolean(props.manualOpen) || pinned || previewOpen;
   const workspaceLabel = props.workspaceRoot
     ? rootLabelFromWorkspaceRoot(props.workspaceRoot)
     : null;
@@ -304,6 +305,7 @@ export const FileExplorerSidebar = memo(function FileExplorerSidebar(props: {
       return;
     }
     const workspaceRoot = props.workspaceRoot;
+    setDirectoryListingSupported(true);
     setIsRefreshing(true);
     void queryClient
       .invalidateQueries({

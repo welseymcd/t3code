@@ -587,6 +587,17 @@ describe("wsApi", () => {
     expect(removeSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
   });
 
+  it("creates persistence access without requiring an RPC client", async () => {
+    const getClientSettings = vi.fn().mockResolvedValue(null);
+    getWindowForTest().desktopBridge = makeDesktopBridge({ getClientSettings });
+
+    const { createLocalPersistenceApi } = await import("./localApi");
+    const persistence = createLocalPersistenceApi();
+
+    await expect(persistence.getClientSettings()).resolves.toBeNull();
+    expect(getClientSettings).toHaveBeenCalledWith();
+  });
+
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);

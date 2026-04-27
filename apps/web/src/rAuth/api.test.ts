@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildRAuthLoginUrl,
   claimAuthorizedT3Server,
   fetchAuthorizedT3Servers,
   registerAuthorizedT3Server,
@@ -8,6 +9,7 @@ import {
 
 describe("r-auth api", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
@@ -24,6 +26,64 @@ describe("r-auth api", () => {
         credentials: "include",
         method: "GET",
       }),
+    );
+  });
+
+  it("builds login URLs through the same-origin r-auth proxy", () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost:3000/settings/connections",
+        origin: "http://localhost:3000",
+      },
+    });
+
+    expect(buildRAuthLoginUrl()).toBe(
+      "http://localhost:3000/api/r-auth/dashboard?redirectTo=http%3A%2F%2Flocalhost%3A3000%2Fsettings%2Fconnections",
+    );
+  });
+
+  it("strips the local proxy prefix from configured external r-auth login URLs", () => {
+    vi.stubEnv("VITE_R_AUTH_URL", "https://auth.rmcd.cc/api/r-auth");
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost:3000/settings/connections",
+        origin: "http://localhost:3000",
+      },
+    });
+
+    expect(buildRAuthLoginUrl()).toBe(
+      "https://auth.rmcd.cc/dashboard?redirectTo=http%3A%2F%2Flocalhost%3A3000%2Fsettings%2Fconnections",
+    );
+  });
+
+  it("keeps desktop r-auth requests on the current origin", async () => {
+    const fetch = vi.fn(async () => Response.json({ ok: true, servers: [] }));
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost:5734/settings/connections",
+        origin: "http://localhost:5734",
+      },
+      desktopBridge: {
+        getLocalEnvironmentBootstrap: () => ({
+          label: "Local environment",
+          httpBaseUrl: "http://127.0.0.1:3773",
+          wsBaseUrl: "ws://127.0.0.1:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        }),
+      },
+    });
+
+    await expect(fetchAuthorizedT3Servers()).resolves.toEqual([]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:5734/api/r-auth/rest/v1/t3/servers",
+      expect.objectContaining({
+        credentials: "include",
+        method: "GET",
+      }),
+    );
+    expect(buildRAuthLoginUrl()).toBe(
+      "http://localhost:5734/api/r-auth/dashboard?redirectTo=http%3A%2F%2Flocalhost%3A5734%2Fsettings%2Fconnections",
     );
   });
 

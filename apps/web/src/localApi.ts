@@ -1,4 +1,10 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  LocalApi,
+  PersistedSavedEnvironmentRecord,
+} from "@t3tools/contracts";
+import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import { resetGitStatusStateForTests } from "./lib/gitStatusState";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
@@ -26,6 +32,53 @@ import {
 } from "./clientPersistenceStorage";
 
 let cachedApi: LocalApi | undefined;
+
+export function createLocalPersistenceApi(): LocalApi["persistence"] {
+  return {
+    getClientSettings: async () => {
+      if (window.desktopBridge) {
+        return window.desktopBridge.getClientSettings();
+      }
+      return readBrowserClientSettings();
+    },
+    setClientSettings: async (settings: ClientSettings) => {
+      if (window.desktopBridge) {
+        return window.desktopBridge.setClientSettings(settings);
+      }
+      writeBrowserClientSettings(settings);
+    },
+    getSavedEnvironmentRegistry: async () => {
+      if (window.desktopBridge) {
+        return window.desktopBridge.getSavedEnvironmentRegistry();
+      }
+      return readBrowserSavedEnvironmentRegistry();
+    },
+    setSavedEnvironmentRegistry: async (records: readonly PersistedSavedEnvironmentRecord[]) => {
+      if (window.desktopBridge) {
+        return window.desktopBridge.setSavedEnvironmentRegistry(records);
+      }
+      writeBrowserSavedEnvironmentRegistry(records);
+    },
+    getSavedEnvironmentSecret: async (environmentId: EnvironmentId) => {
+      if (window.desktopBridge) {
+        return window.desktopBridge.getSavedEnvironmentSecret(environmentId);
+      }
+      return readBrowserSavedEnvironmentSecret(environmentId);
+    },
+    setSavedEnvironmentSecret: async (environmentId: EnvironmentId, secret: string) => {
+      if (window.desktopBridge) {
+        return window.desktopBridge.setSavedEnvironmentSecret(environmentId, secret);
+      }
+      return writeBrowserSavedEnvironmentSecret(environmentId, secret);
+    },
+    removeSavedEnvironmentSecret: async (environmentId: EnvironmentId) => {
+      if (window.desktopBridge) {
+        return window.desktopBridge.removeSavedEnvironmentSecret(environmentId);
+      }
+      removeBrowserSavedEnvironmentSecret(environmentId);
+    },
+  };
+}
 
 export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
   return {
@@ -66,50 +119,7 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
         return showContextMenuFallback(items, position);
       },
     },
-    persistence: {
-      getClientSettings: async () => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.getClientSettings();
-        }
-        return readBrowserClientSettings();
-      },
-      setClientSettings: async (settings) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.setClientSettings(settings);
-        }
-        writeBrowserClientSettings(settings);
-      },
-      getSavedEnvironmentRegistry: async () => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.getSavedEnvironmentRegistry();
-        }
-        return readBrowserSavedEnvironmentRegistry();
-      },
-      setSavedEnvironmentRegistry: async (records) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.setSavedEnvironmentRegistry(records);
-        }
-        writeBrowserSavedEnvironmentRegistry(records);
-      },
-      getSavedEnvironmentSecret: async (environmentId) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.getSavedEnvironmentSecret(environmentId);
-        }
-        return readBrowserSavedEnvironmentSecret(environmentId);
-      },
-      setSavedEnvironmentSecret: async (environmentId, secret) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.setSavedEnvironmentSecret(environmentId, secret);
-        }
-        return writeBrowserSavedEnvironmentSecret(environmentId, secret);
-      },
-      removeSavedEnvironmentSecret: async (environmentId) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.removeSavedEnvironmentSecret(environmentId);
-        }
-        removeBrowserSavedEnvironmentSecret(environmentId);
-      },
-    },
+    persistence: createLocalPersistenceApi(),
     server: {
       getConfig: rpcClient.server.getConfig,
       refreshProviders: rpcClient.server.refreshProviders,

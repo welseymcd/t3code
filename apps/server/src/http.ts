@@ -31,6 +31,14 @@ const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const R_AUTH_PROXY_PREFIX = "/api/r-auth";
 const DEFAULT_R_AUTH_ISSUER = "https://auth.rmcd.cc";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+const R_AUTH_PROXY_ALLOWED_EXACT_PATHS = new Set(["/rest/v1/health", "/dashboard", "/vite.svg"]);
+const R_AUTH_PROXY_ALLOWED_PREFIXES = [
+  "/rest/v1/auth/",
+  "/rest/v1/t3/",
+  "/api/auth/",
+  "/trpc/",
+] as const;
+const R_AUTH_PROXY_ALLOWED_DASHBOARD_PREFIXES = ["/dashboard/"] as const;
 
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: ["GET", "POST", "OPTIONS"],
@@ -63,6 +71,7 @@ const requireAuthenticatedRequest = Effect.gen(function* () {
 export function resolveRAuthProxyTargetUrl(
   config: Pick<ServerConfigShape, "rAuthIssuer">,
   requestPathname: string,
+  requestSearch = "",
 ): string | null {
   if (!requestPathname.startsWith(`${R_AUTH_PROXY_PREFIX}/`)) {
     return null;
@@ -70,17 +79,53 @@ export function resolveRAuthProxyTargetUrl(
 
   const upstreamPathname = requestPathname.slice(R_AUTH_PROXY_PREFIX.length);
   if (
-    !upstreamPathname.startsWith("/rest/v1/auth/") &&
-    !upstreamPathname.startsWith("/rest/v1/t3/")
+    !R_AUTH_PROXY_ALLOWED_EXACT_PATHS.has(upstreamPathname) &&
+    !R_AUTH_PROXY_ALLOWED_PREFIXES.some((prefix) => upstreamPathname.startsWith(prefix)) &&
+    !R_AUTH_PROXY_ALLOWED_DASHBOARD_PREFIXES.some((prefix) => upstreamPathname.startsWith(prefix))
   ) {
     return null;
   }
 
   const upstreamUrl = new URL(config.rAuthIssuer?.trim() || DEFAULT_R_AUTH_ISSUER);
   upstreamUrl.pathname = upstreamPathname;
-  upstreamUrl.search = "";
+  upstreamUrl.search = requestSearch;
   upstreamUrl.hash = "";
   return upstreamUrl.toString();
+}
+
+export function resolveRAuthDashboardAbsoluteTargetUrl(
+  config: Pick<ServerConfigShape, "rAuthIssuer">,
+  requestPathname: string,
+  requestSearch = "",
+): string | null {
+  if (
+    !requestPathname.startsWith("/api/auth/") &&
+    !requestPathname.startsWith("/trpc/") &&
+    !requestPathname.startsWith("/dashboard/") &&
+    requestPathname !== "/vite.svg"
+  ) {
+    return null;
+  }
+
+  const upstreamUrl = new URL(config.rAuthIssuer?.trim() || DEFAULT_R_AUTH_ISSUER);
+  upstreamUrl.pathname = requestPathname;
+  upstreamUrl.search = requestSearch;
+  upstreamUrl.hash = "";
+  return upstreamUrl.toString();
+}
+
+export function rewriteRAuthProxyLocation(
+  config: Pick<ServerConfigShape, "rAuthIssuer">,
+  location: string,
+  requestOrigin: string,
+): string {
+  const upstreamOrigin = new URL(config.rAuthIssuer?.trim() || DEFAULT_R_AUTH_ISSUER).origin;
+  const locationUrl = new URL(location, upstreamOrigin);
+  if (locationUrl.origin !== upstreamOrigin) {
+    return location;
+  }
+
+  return `${requestOrigin}${R_AUTH_PROXY_PREFIX}${locationUrl.pathname}${locationUrl.search}${locationUrl.hash}`;
 }
 
 function pickHeader(headers: Readonly<Record<string, string>>, name: string): string | undefined {
@@ -90,7 +135,32 @@ function pickHeader(headers: Readonly<Record<string, string>>, name: string): st
 
 class RAuthProxyError extends Data.TaggedError("RAuthProxyError")<{
   readonly cause: unknown;
+  readonly targetUrl: string;
 }> {}
+
+export function rewriteRAuthProxyTextContent(content: string): string {
+  return content
+    .replaceAll('"/dashboard', `"/api/r-auth/dashboard`)
+    .replaceAll("'/dashboard", `'/api/r-auth/dashboard`)
+    .replaceAll('"/api/auth', `"/api/r-auth/api/auth`)
+    .replaceAll("'/api/auth", `'/api/r-auth/api/auth`)
+    .replaceAll('"/trpc', `"/api/r-auth/trpc`)
+    .replaceAll("'/trpc", `'/api/r-auth/trpc`)
+    .replaceAll('"/vite.svg"', `"/api/r-auth/vite.svg"`)
+    .replaceAll("'/vite.svg'", `'/api/r-auth/vite.svg'`);
+}
+
+function shouldRewriteRAuthProxyTextContent(contentType: string | null): boolean {
+  if (!contentType) {
+    return false;
+  }
+  const normalized = contentType.toLowerCase();
+  return (
+    normalized.includes("text/html") ||
+    normalized.includes("text/css") ||
+    normalized.includes("javascript")
+  );
+}
 
 const rAuthProxyHandler = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -99,7 +169,10 @@ const rAuthProxyHandler = Effect.gen(function* () {
     return HttpServerResponse.text("Bad Request", { status: 400 });
   }
 
-  const targetUrl = resolveRAuthProxyTargetUrl(yield* ServerConfig, url.value.pathname);
+  const config = yield* ServerConfig;
+  const targetUrl =
+    resolveRAuthProxyTargetUrl(config, url.value.pathname, url.value.search) ??
+    resolveRAuthDashboardAbsoluteTargetUrl(config, url.value.pathname, url.value.search);
   if (targetUrl === null) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
@@ -109,6 +182,7 @@ const rAuthProxyHandler = Effect.gen(function* () {
   const contentType = pickHeader(request.headers, "content-type");
   const accept = pickHeader(request.headers, "accept");
   const userAgent = pickHeader(request.headers, "user-agent");
+  const upstreamOrigin = new URL(targetUrl).origin;
   if (cookie) {
     headers.cookie = cookie;
   }
@@ -121,6 +195,8 @@ const rAuthProxyHandler = Effect.gen(function* () {
   if (userAgent) {
     headers["user-agent"] = userAgent;
   }
+  headers.origin = upstreamOrigin;
+  headers.referer = `${upstreamOrigin}/dashboard`;
 
   const method = request.method.toUpperCase();
   const body =
@@ -134,27 +210,41 @@ const rAuthProxyHandler = Effect.gen(function* () {
         body,
         redirect: "manual",
       }),
-    catch: (cause) => new RAuthProxyError({ cause }),
+    catch: (cause) => new RAuthProxyError({ cause, targetUrl }),
   });
-  const responseBody = new Uint8Array(yield* Effect.promise(() => upstreamResponse.arrayBuffer()));
+  const responseContentType = upstreamResponse.headers.get("content-type");
+  const responseBody = shouldRewriteRAuthProxyTextContent(responseContentType)
+    ? rewriteRAuthProxyTextContent(yield* Effect.promise(() => upstreamResponse.text()))
+    : new Uint8Array(yield* Effect.promise(() => upstreamResponse.arrayBuffer()));
   const responseHeaders: Record<string, string> = {
     "Cache-Control": "no-store",
   };
-  const responseContentType = upstreamResponse.headers.get("content-type");
   const responseSetCookie = upstreamResponse.headers.get("set-cookie");
+  const responseLocation = upstreamResponse.headers.get("location");
   if (responseSetCookie) {
     responseHeaders["Set-Cookie"] = responseSetCookie;
   }
+  if (responseLocation) {
+    responseHeaders.Location = rewriteRAuthProxyLocation(
+      config,
+      responseLocation,
+      url.value.origin,
+    );
+  }
 
-  return HttpServerResponse.uint8Array(responseBody, {
+  const responseOptions = {
     status: upstreamResponse.status,
     contentType: responseContentType ?? undefined,
     headers: responseHeaders,
-  });
+  };
+  return typeof responseBody === "string"
+    ? HttpServerResponse.text(responseBody, responseOptions)
+    : HttpServerResponse.uint8Array(responseBody, responseOptions);
 }).pipe(
   Effect.catch((cause) =>
     Effect.gen(function* () {
-      yield* Effect.logWarning("Failed to proxy r-auth request", { cause });
+      const details = cause instanceof RAuthProxyError ? ` target=${cause.targetUrl}` : "";
+      yield* Effect.logWarning(`Failed to proxy r-auth request.${details}`);
       return HttpServerResponse.text("r-auth proxy request failed.", { status: 502 });
     }),
   ),
@@ -163,6 +253,13 @@ const rAuthProxyHandler = Effect.gen(function* () {
 export const rAuthProxyRouteLayer = Layer.mergeAll(
   HttpRouter.add("GET", `${R_AUTH_PROXY_PREFIX}/*`, rAuthProxyHandler),
   HttpRouter.add("POST", `${R_AUTH_PROXY_PREFIX}/*`, rAuthProxyHandler),
+  HttpRouter.add("GET", "/api/auth/*", rAuthProxyHandler),
+  HttpRouter.add("POST", "/api/auth/*", rAuthProxyHandler),
+  HttpRouter.add("GET", "/trpc/*", rAuthProxyHandler),
+  HttpRouter.add("POST", "/trpc/*", rAuthProxyHandler),
+  HttpRouter.add("GET", "/dashboard/*", rAuthProxyHandler),
+  HttpRouter.add("GET", "/vite.svg", rAuthProxyHandler),
+  HttpRouter.add("POST", "/cdn-cgi/*", HttpServerResponse.empty({ status: 204 })),
 );
 
 export const serverEnvironmentRouteLayer = HttpRouter.add(

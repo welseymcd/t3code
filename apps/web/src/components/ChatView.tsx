@@ -717,6 +717,7 @@ export default function ChatView(props: ChatViewProps) {
   const [pendingServerThreadWorktreePath, setPendingServerThreadWorktreePath] = useState<
     string | null
   >();
+  const [fileExplorerOpen, setFileExplorerOpen] = useState(false);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -1477,6 +1478,11 @@ export default function ChatView(props: ChatViewProps) {
     gitStatus: gitStatusQuery.data,
   });
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  useEffect(() => {
+    if (!activeWorkspaceRoot) {
+      setFileExplorerOpen(false);
+    }
+  }, [activeWorkspaceRoot]);
   const activeTerminalLaunchContext =
     terminalLaunchContext?.threadId === activeThreadId
       ? terminalLaunchContext
@@ -1697,6 +1703,12 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef) return;
     setTerminalOpen(!terminalState.terminalOpen);
   }, [activeThreadRef, setTerminalOpen, terminalState.terminalOpen]);
+  const toggleFileExplorerVisibility = useCallback(() => {
+    if (!activeWorkspaceRoot) {
+      return;
+    }
+    setFileExplorerOpen((open) => !open);
+  }, [activeWorkspaceRoot]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
@@ -3437,6 +3449,8 @@ export default function ChatView(props: ChatViewProps) {
           terminalAvailable={activeProject !== undefined}
           terminalOpen={terminalState.terminalOpen}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
+          fileExplorerAvailable={Boolean(activeWorkspaceRoot)}
+          fileExplorerOpen={fileExplorerOpen}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
@@ -3445,6 +3459,7 @@ export default function ChatView(props: ChatViewProps) {
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
+          onToggleFileExplorer={toggleFileExplorerVisibility}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -3640,6 +3655,7 @@ export default function ChatView(props: ChatViewProps) {
         ) : null}
         <FileExplorerSidebar
           environmentId={environmentId}
+          manualOpen={fileExplorerOpen}
           resolvedTheme={resolvedTheme}
           workspaceRoot={activeWorkspaceRoot}
         />

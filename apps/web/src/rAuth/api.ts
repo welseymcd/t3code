@@ -50,9 +50,25 @@ export class RAuthHttpError extends Error {
   }
 }
 
+const R_AUTH_PROXY_PREFIX = "/api/r-auth";
+const DEFAULT_R_AUTH_PROXY_BASE_URL = R_AUTH_PROXY_PREFIX;
+
+function normalizeConfiguredRAuthBaseUrl(configured: string): string {
+  const url = new URL(configured, window.location.origin);
+  if (
+    url.origin !== window.location.origin &&
+    url.pathname.replace(/\/$/, "") === R_AUTH_PROXY_PREFIX
+  ) {
+    url.pathname = "/";
+  }
+  return url.toString();
+}
+
 function resolveRAuthBaseUrl(): string {
   const configured = import.meta.env.VITE_R_AUTH_URL?.trim();
-  return configured && configured.length > 0 ? configured : "/api/r-auth";
+  return configured && configured.length > 0
+    ? normalizeConfiguredRAuthBaseUrl(configured)
+    : DEFAULT_R_AUTH_PROXY_BASE_URL;
 }
 
 function resolveRAuthUrl(pathname: string): string {
@@ -60,6 +76,15 @@ function resolveRAuthUrl(pathname: string): string {
   url.pathname = `${url.pathname.replace(/\/$/, "")}/${pathname.replace(/^\//, "")}`;
   url.search = "";
   url.hash = "";
+  return url.toString();
+}
+
+export function buildRAuthLoginUrl(returnTo: string = window.location.href): string {
+  const url = new URL(resolveRAuthBaseUrl(), window.location.origin);
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/dashboard`;
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("redirectTo", returnTo);
   return url.toString();
 }
 
