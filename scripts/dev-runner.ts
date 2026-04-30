@@ -76,10 +76,6 @@ const OffsetConfig = Config.all({
   devInstance: optionalStringConfig("T3CODE_DEV_INSTANCE"),
 });
 
-const RemoteDevConfig = Config.all({
-  publicOrigin: optionalUrlConfig("T3CODE_DEV_PUBLIC_ORIGIN"),
-});
-
 export function resolveOffset(config: {
   readonly portOffset: number | undefined;
   readonly devInstance: string | undefined;
@@ -132,7 +128,6 @@ interface CreateDevRunnerEnvInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
-  readonly publicOrigin: URL | undefined;
 }
 
 export function createDevRunnerEnv({
@@ -147,7 +142,6 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
-  publicOrigin,
 }: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
@@ -166,17 +160,8 @@ export function createDevRunnerEnv({
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
-      if (publicOrigin) {
-        output.T3CODE_DEV_PUBLIC_ORIGIN = publicOrigin.toString();
-        output.T3CODE_WEB_DEV_PROXY_TARGET = `http://127.0.0.1:${serverPort}`;
-        delete output.VITE_HTTP_URL;
-        delete output.VITE_WS_URL;
-      } else {
-        output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
-        output.VITE_WS_URL = `ws://localhost:${serverPort}`;
-        delete output.T3CODE_DEV_PUBLIC_ORIGIN;
-        delete output.T3CODE_WEB_DEV_PROXY_TARGET;
-      }
+      output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
+      output.VITE_WS_URL = `ws://localhost:${serverPort}`;
     } else {
       output.T3CODE_PORT = String(serverPort);
       output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
@@ -184,8 +169,6 @@ export function createDevRunnerEnv({
       delete output.T3CODE_MODE;
       delete output.T3CODE_NO_BROWSER;
       delete output.T3CODE_HOST;
-      delete output.T3CODE_DEV_PUBLIC_ORIGIN;
-      delete output.T3CODE_WEB_DEV_PROXY_TARGET;
     }
 
     if (!isDesktopMode && host !== undefined) {
@@ -388,7 +371,6 @@ interface DevRunnerCliInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
-  readonly publicOrigin: URL | undefined;
   readonly dryRun: boolean;
   readonly turboArgs: ReadonlyArray<string>;
 }
@@ -414,19 +396,6 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         }),
     });
 
-    const { publicOrigin } = yield* RemoteDevConfig.asEffect().pipe(
-      Effect.mapError(
-        (cause) =>
-          new DevRunnerError({
-            message: "Failed to read T3CODE_DEV_PUBLIC_ORIGIN configuration.",
-            cause,
-          }),
-      ),
-      Effect.map((config) => ({
-        publicOrigin: input.publicOrigin ?? config.publicOrigin,
-      })),
-    );
-
     const { serverOffset, webOffset } = yield* resolveModePortOffsets({
       mode: input.mode,
       startOffset: offset,
@@ -446,7 +415,6 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       host: input.host,
       port: input.port,
       devUrl: input.devUrl,
-      publicOrigin,
     });
 
     const selectionSuffix =
@@ -535,13 +503,6 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withSchema(Schema.URLFromString),
     Flag.withDescription("Web dev URL override (forwards to VITE_DEV_SERVER_URL)."),
     Flag.withFallbackConfig(optionalUrlConfig("VITE_DEV_SERVER_URL")),
-  ),
-  publicOrigin: Flag.string("public-origin").pipe(
-    Flag.withSchema(Schema.URLFromString),
-    Flag.withDescription(
-      "Public origin for same-origin reverse-proxied dev access (equivalent to T3CODE_DEV_PUBLIC_ORIGIN).",
-    ),
-    Flag.withFallbackConfig(optionalUrlConfig("T3CODE_DEV_PUBLIC_ORIGIN")),
   ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Resolve mode/ports/env and print, but do not spawn turbo."),

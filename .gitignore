@@ -9,8 +9,6 @@ apps/*/dist
 packages/*/dist
 .env
 .env.local
-.devcontainer/.env
-docker/dev-host/.env
 build/
 .logs/
 release/

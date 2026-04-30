@@ -1,9 +1,0 @@
-services:
-  t3code:
-    image: ghcr.io/welseymcd/t3code:latest
-    restart: always
-    ports:
-      - "3773:3773"
-    volumes:
-      - /t3code:/data
-      - /var/run/docker.sock:/var/run/docker.sock

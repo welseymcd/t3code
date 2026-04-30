@@ -1,9 +1,6 @@
 {
   "name": "T3 Code Dev",
-  "dockerComposeFile": ["docker-compose.yml"],
-  "service": "workspace",
-  "workspaceFolder": "/workspaces/t3code",
-  "shutdownAction": "stopCompose",
+  "image": "debian:bookworm",
   "features": {
     "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers-extra/features/bun:1": {
@@ -22,10 +19,8 @@
     "ghcr.io/devcontainers-extra/features/bun"
   ],
   "postCreateCommand": {
-    "bun-install": "bun install --backend=copyfile --frozen-lockfile",
-    "devcontainer-cli": "bun install -g @devcontainers/cli@0.86.0"
+    "bun-install": "bun install --backend=copyfile --frozen-lockfile"
   },
-  "forwardPorts": [5733, 13773],
   "customizations": {
     "vscode": {
       "extensions": ["oxc.oxc-vscode"]

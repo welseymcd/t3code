@@ -61,7 +61,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
-          publicOrigin: undefined,
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve(NodeOS.homedir(), ".t3"));
@@ -83,7 +82,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "0.0.0.0",
           port: 4222,
           devUrl: new URL("http://localhost:7331"),
-          publicOrigin: undefined,
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
@@ -114,7 +112,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
-          publicOrigin: undefined,
         });
 
         assert.equal(env.T3CODE_MODE, "web");
@@ -138,7 +135,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
-          publicOrigin: undefined,
         });
 
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
@@ -160,7 +156,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
-          publicOrigin: undefined,
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
@@ -188,7 +183,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "127.0.0.1",
           port: 4222,
           devUrl: undefined,
-          publicOrigin: undefined,
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
@@ -218,37 +212,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
-          publicOrigin: undefined,
         });
 
         assert.equal(env.T3CODE_PORT, "13773");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
         assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
-      }),
-    );
-
-    it.effect("uses same-origin client targets when a public origin is configured", () =>
-      Effect.gen(function* () {
-        const env = yield* createDevRunnerEnv({
-          mode: "dev",
-          baseEnv: {},
-          serverOffset: 0,
-          webOffset: 0,
-          t3Home: undefined,
-          noBrowser: undefined,
-          autoBootstrapProjectFromCwd: undefined,
-          logWebSocketEvents: undefined,
-          host: "0.0.0.0",
-          port: undefined,
-          devUrl: undefined,
-          publicOrigin: new URL("https://t3code.rmcd.fyi"),
-        });
-
-        assert.equal(env.T3CODE_PORT, "13773");
-        assert.equal(env.VITE_HTTP_URL, undefined);
-        assert.equal(env.VITE_WS_URL, undefined);
-        assert.equal(env.T3CODE_DEV_PUBLIC_ORIGIN, "https://t3code.rmcd.fyi/");
-        assert.equal(env.T3CODE_WEB_DEV_PROXY_TARGET, "http://127.0.0.1:13773");
       }),
     );
   });

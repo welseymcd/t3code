@@ -9,7 +9,6 @@ import {
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
-import { ensureT3CodeDevContainerSettings } from "../project/devContainerSettings.ts";
 import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
 
 export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
@@ -47,26 +46,12 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (command.type === "project.create") {
-      const workspaceRoot = yield* normalizeProjectWorkspaceRootForCreate(
-        command.workspaceRoot,
-        command.createWorkspaceRootIfMissing,
-      );
-      yield* ensureT3CodeDevContainerSettings({
-        projectId: command.projectId,
-        title: command.title,
-        workspaceRoot,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestrationDispatchCommandError({
-              message: `Failed to write T3 Code devcontainer scaffold: ${cause.message}`,
-            }),
-        ),
-      );
-
       return {
         ...command,
-        workspaceRoot,
+        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
+          command.workspaceRoot,
+          command.createWorkspaceRootIfMissing,
+        ),
         createWorkspaceRootIfMissing: command.createWorkspaceRootIfMissing === true,
       } satisfies OrchestrationCommand;
     }

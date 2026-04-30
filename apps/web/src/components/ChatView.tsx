@@ -479,7 +479,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     () =>
       project
         ? projectScriptRuntimeEnv({
-            project: { cwd: project.cwd, name: project.name },
+            project: { cwd: project.cwd },
             worktreePath: effectiveWorktreePath,
           })
         : {},
@@ -1810,7 +1810,6 @@ export default function ChatView(props: ChatViewProps) {
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
           cwd: activeProject.cwd,
-          name: activeProject.name,
         },
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),

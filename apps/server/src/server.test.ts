@@ -2379,17 +2379,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       const stat = yield* fs.stat(missingWorkspaceRoot);
-      const t3codeSettings = yield* fs.readFileString(
-        path.join(missingWorkspaceRoot, ".devcontainer", "t3code.json"),
-      );
-      const devcontainerEnv = yield* fs.readFileString(
-        path.join(missingWorkspaceRoot, ".devcontainer", ".env"),
-      );
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
-      assert.include(t3codeSettings, '"hostname": "new-project.rmcd.fyi"');
-      assert.include(devcontainerEnv, "DEV_HOST_PROJECT=new-project");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

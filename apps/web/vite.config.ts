@@ -9,8 +9,6 @@ const port = Number(process.env.PORT ?? 5733);
 const host = process.env.HOST?.trim() || "localhost";
 const configuredHttpUrl = process.env.VITE_HTTP_URL?.trim();
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
-const configuredProxyTarget = process.env.T3CODE_WEB_DEV_PROXY_TARGET?.trim();
-const configuredPublicOrigin = process.env.T3CODE_DEV_PUBLIC_ORIGIN?.trim();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
 const buildSourcemap =
@@ -41,35 +39,7 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
   }
 }
 
-function resolvePublicOrigin(rawValue: string | undefined): URL | undefined {
-  if (!rawValue) {
-    return undefined;
-  }
-
-  try {
-    return new URL(rawValue);
-  } catch {
-    return undefined;
-  }
-}
-
-const publicOrigin = resolvePublicOrigin(configuredPublicOrigin);
-const devProxyTarget = configuredProxyTarget || resolveDevProxyTarget(configuredWsUrl);
-const allowedHosts = publicOrigin ? [publicOrigin.hostname] : [];
-const hmrConfig = publicOrigin
-  ? {
-      protocol: publicOrigin.protocol === "https:" ? "wss" : "ws",
-      host: publicOrigin.hostname,
-      clientPort: publicOrigin.port
-        ? Number(publicOrigin.port)
-        : publicOrigin.protocol === "https:"
-          ? 443
-          : 80,
-    }
-  : {
-      protocol: "ws",
-      host,
-    };
+const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
 export default defineConfig({
   plugins: [
@@ -86,7 +56,13 @@ export default defineConfig({
     tailwindcss(),
   ],
   optimizeDeps: {
-    include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
+    include: [
+      "@pierre/diffs",
+      "@pierre/diffs/react",
+      "@pierre/diffs/worker/worker.js",
+      "effect/Array",
+      "effect/Order",
+    ],
   },
   define: {
     "import.meta.env.VITE_HTTP_URL": JSON.stringify(configuredHttpUrl ?? ""),
@@ -101,7 +77,6 @@ export default defineConfig({
     host,
     port,
     strictPort: true,
-    allowedHosts,
     ...(devProxyTarget
       ? {
           proxy: {
@@ -110,18 +85,6 @@ export default defineConfig({
               changeOrigin: true,
             },
             "/api": {
-              target: devProxyTarget,
-              changeOrigin: true,
-            },
-            "/dashboard": {
-              target: devProxyTarget,
-              changeOrigin: true,
-            },
-            "/trpc": {
-              target: devProxyTarget,
-              changeOrigin: true,
-            },
-            "/cdn-cgi": {
               target: devProxyTarget,
               changeOrigin: true,
             },
@@ -134,8 +97,10 @@ export default defineConfig({
       : {}),
     hmr: {
       // Explicit config so Vite's HMR WebSocket connects reliably
-      // inside Electron and when accessed through the public reverse proxy.
-      ...hmrConfig,
+      // inside Electron's BrowserWindow. Vite 8 uses console.debug for
+      // connection logs — enable "Verbose" in DevTools to see them.
+      protocol: "ws",
+      host,
     },
   },
   build: {

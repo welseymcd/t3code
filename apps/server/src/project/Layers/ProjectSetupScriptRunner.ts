@@ -38,7 +38,7 @@ const makeProjectSetupScriptRunner = Effect.gen(function* () {
       const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
       const cwd = input.worktreePath;
       const env = projectScriptRuntimeEnv({
-        project: { cwd: project.workspaceRoot, name: project.title },
+        project: { cwd: project.workspaceRoot },
         worktreePath: input.worktreePath,
       });
 
