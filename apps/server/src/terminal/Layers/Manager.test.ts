@@ -24,7 +24,6 @@ import {
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 
-import type { ProcessRunOptions, ProcessRunResult } from "../../processRunner.ts";
 import type { TerminalManagerShape } from "../Services/Manager.ts";
 import {
   type PtyAdapterShape,
@@ -197,11 +196,6 @@ interface CreateManagerOptions {
   shellResolver?: () => string;
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
-  processRunner?: (
-    command: string,
-    args: readonly string[],
-    options?: ProcessRunOptions,
-  ) => Promise<ProcessRunResult>;
   subprocessChecker?: (terminalPid: number) => Effect.Effect<boolean>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -250,7 +244,6 @@ const createManager = (
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
           : {}),
-        ...(options.processRunner !== undefined ? { processRunner: options.processRunner } : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const scope = yield* Effect.scope;
@@ -990,129 +983,6 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
-    }),
-  );
-
-  it.effect("runs project script terminals through devcontainer when config exists", () =>
-    Effect.gen(function* () {
-      if (process.platform === "win32") return;
-      const fs = yield* FileSystem.FileSystem;
-      const workspaceRoot = yield* fs.makeTempDirectoryScoped({
-        prefix: "t3code-devcontainer-workspace-",
-      });
-      yield* fs.makeDirectory(path.join(workspaceRoot, ".devcontainer"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(workspaceRoot, ".devcontainer", "devcontainer.json"),
-        '{ "image": "debian:bookworm" }',
-      );
-
-      const processCalls: Array<{
-        command: string;
-        args: readonly string[];
-        options?: ProcessRunOptions;
-      }> = [];
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/bin/bash",
-        processRunner: async (command, args, options) => {
-          processCalls.push({
-            command,
-            args,
-            ...(options !== undefined ? { options } : {}),
-          });
-          return {
-            stdout: "",
-            stderr: "",
-            code: 0,
-            signal: null,
-            timedOut: false,
-          };
-        },
-      });
-
-      yield* manager.open(
-        openInput({
-          cwd: workspaceRoot,
-          env: {
-            T3CODE_PROJECT_ROOT: workspaceRoot,
-          },
-        }),
-      );
-
-      expect(processCalls).toEqual([
-        {
-          command: "devcontainer",
-          args: ["up", "--workspace-folder", workspaceRoot],
-          options: {
-            cwd: workspaceRoot,
-            timeoutMs: 600_000,
-            allowNonZeroExit: false,
-            maxBufferBytes: 1_048_576,
-            outputMode: "truncate",
-          },
-        },
-      ]);
-      const spawnInput = ptyAdapter.spawnInputs[0];
-      expect(spawnInput).toBeDefined();
-      if (!spawnInput) return;
-
-      expect(spawnInput.shell).toBe("devcontainer");
-      expect(spawnInput.args).toEqual(["exec", "--workspace-folder", workspaceRoot, "/bin/bash"]);
-      assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, workspaceRoot);
-    }),
-  );
-
-  it.effect("uses the worktree devcontainer config before the project root config", () =>
-    Effect.gen(function* () {
-      if (process.platform === "win32") return;
-      const fs = yield* FileSystem.FileSystem;
-      const projectRoot = yield* fs.makeTempDirectoryScoped({
-        prefix: "t3code-devcontainer-project-",
-      });
-      const worktreeRoot = yield* fs.makeTempDirectoryScoped({
-        prefix: "t3code-devcontainer-worktree-",
-      });
-      yield* fs.writeFileString(
-        path.join(projectRoot, ".devcontainer.json"),
-        '{ "image": "debian:bookworm" }',
-      );
-      yield* fs.writeFileString(
-        path.join(worktreeRoot, ".devcontainer.json"),
-        '{ "image": "debian:bookworm" }',
-      );
-
-      const processCalls: Array<{ args: readonly string[] }> = [];
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/bin/sh",
-        processRunner: async (_command, args) => {
-          processCalls.push({ args });
-          return {
-            stdout: "",
-            stderr: "",
-            code: 0,
-            signal: null,
-            timedOut: false,
-          };
-        },
-      });
-
-      yield* manager.open(
-        openInput({
-          cwd: worktreeRoot,
-          worktreePath: worktreeRoot,
-          env: {
-            T3CODE_PROJECT_ROOT: projectRoot,
-            T3CODE_WORKTREE_PATH: worktreeRoot,
-          },
-        }),
-      );
-
-      expect(processCalls[0]?.args).toEqual(["up", "--workspace-folder", worktreeRoot]);
-      expect(ptyAdapter.spawnInputs[0]?.args).toEqual([
-        "exec",
-        "--workspace-folder",
-        worktreeRoot,
-        "/bin/sh",
-      ]);
     }),
   );
 
