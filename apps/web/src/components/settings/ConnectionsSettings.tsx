@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AuthClientSession,
   type AuthPairingLink,
+  type DesktopRAuthCallbackPayload,
   type DesktopServerExposureState,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -50,10 +51,12 @@ import {
   createServerPairingCredential,
   emailServerPairingLink,
   fetchSessionState,
+  submitServerAuthCredential,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
   revokeServerPairingLink,
   isLoopbackHostname,
+  usePrimaryEnvironmentId,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
@@ -71,7 +74,7 @@ import {
   removeSavedEnvironment,
 } from "~/environments/runtime";
 import { syncAuthorizedSavedEnvironments, useRAuthSyncStore } from "~/rAuth/sync";
-import { buildRAuthLoginUrl } from "~/rAuth/api";
+import { buildDesktopRAuthCallbackUrl, buildRAuthLoginUrl } from "~/rAuth/api";
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -868,6 +871,7 @@ function SavedBackendListRow({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [currentSessionRole, setCurrentSessionRole] = useState<"owner" | "client" | null>(
     desktopBridge ? "owner" : null,
   );
@@ -1321,7 +1325,80 @@ export function ConnectionsSettings() {
     () => desktopPairingLinks.filter((pairingLink) => pairingLink.role === "client"),
     [desktopPairingLinks],
   );
-  const rAuthLoginUrl = useMemo(() => buildRAuthLoginUrl(), []);
+  const rAuthLoginUrl = useMemo(
+    () =>
+      buildRAuthLoginUrl(
+        desktopBridge ? buildDesktopRAuthCallbackUrl(primaryEnvironmentId) : window.location.href,
+      ),
+    [desktopBridge, primaryEnvironmentId],
+  );
+  const handleRAuthCallback = useCallback(async (payload: DesktopRAuthCallbackPayload) => {
+    if (payload.error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not sign in to r-auth",
+          description: payload.error,
+        }),
+      );
+      return;
+    }
+
+    if (!payload.credential) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not sign in to r-auth",
+          description: "The sign-in callback did not include an authorization credential.",
+        }),
+      );
+      return;
+    }
+
+    useRAuthSyncStore.getState().patch({ sessionState: "unknown" });
+    try {
+      await submitServerAuthCredential(payload.credential);
+      await syncAuthorizedSavedEnvironments().catch(() => undefined);
+      toastManager.add({
+        type: "success",
+        title: "Signed in with r-auth",
+        description: "The authorization was transferred to this app.",
+      });
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not sign in to r-auth",
+          description: error instanceof Error ? error.message : "Authentication failed.",
+        }),
+      );
+    }
+  }, []);
+  const handleRAuthSignIn = useCallback(() => {
+    useRAuthSyncStore.getState().patch({ sessionState: "unknown" });
+    if (!desktopBridge) {
+      return;
+    }
+    void desktopBridge.openExternal(rAuthLoginUrl).then((opened) => {
+      if (!opened) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open r-auth",
+            description: "The system browser did not accept the sign-in link.",
+          }),
+        );
+      }
+    });
+  }, [desktopBridge, rAuthLoginUrl]);
+
+  useEffect(() => {
+    const unsubscribe = desktopBridge?.onRAuthCallback(handleRAuthCallback);
+    return () => {
+      unsubscribe?.();
+    };
+  }, [desktopBridge, handleRAuthCallback]);
+
   return (
     <SettingsPageContainer>
       {canManageLocalBackend ? (
@@ -1502,14 +1579,7 @@ export function ConnectionsSettings() {
           control={
             <div className="flex items-center gap-2">
               {desktopBridge && rAuthSessionState !== "authenticated" ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  render={<a href={rAuthLoginUrl} target="_blank" rel="noreferrer" />}
-                  onClick={() => {
-                    useRAuthSyncStore.getState().patch({ sessionState: "unknown" });
-                  }}
-                >
+                <Button size="xs" variant="outline" onClick={handleRAuthSignIn}>
                   <LogInIcon className="size-3" />
                   Sign in
                 </Button>

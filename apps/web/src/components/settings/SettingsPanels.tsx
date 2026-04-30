@@ -2,15 +2,21 @@ import {
   ArchiveIcon,
   ArchiveX,
   ChevronDownIcon,
+  CopyIcon,
+  ExternalLinkIcon,
   InfoIcon,
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  SaveIcon,
+  Trash2Icon,
   XIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  type DevProxyRuntimeStatus,
+  type DevProxyTarget,
   type DesktopUpdateChannel,
   type ScopedThreadRef,
   type ProviderKind,
@@ -1805,6 +1811,349 @@ export function GeneralSettingsPanel() {
             </Button>
           }
         />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+const DEV_PROXY_STATUS_DOT_CLASSNAME: Record<DevProxyRuntimeStatus["status"], string> = {
+  reachable: "bg-success",
+  unreachable: "bg-destructive",
+  unknown: "bg-muted-foreground/40",
+};
+
+function getDevProxyStatus(
+  statuses: ReadonlyArray<DevProxyRuntimeStatus>,
+  targetId: string,
+): DevProxyRuntimeStatus | null {
+  return statuses.find((status) => status.targetId === targetId) ?? null;
+}
+
+function getPreviewUrl(routePath: string): string {
+  const basePath = routePath.endsWith("/") ? routePath : `${routePath}/`;
+  return `${window.location.origin}${basePath}`;
+}
+
+export function DevServersSettingsPanel() {
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const [targets, setTargets] = useState<DevProxyTarget[]>([]);
+  const [statuses, setStatuses] = useState<DevProxyRuntimeStatus[]>([]);
+  const [targetDrafts, setTargetDrafts] = useState<Record<string, { label: string; targetUrl: string }>>({});
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [label, setLabel] = useState("");
+  const [targetUrl, setTargetUrl] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!selectedProjectId && projects[0]) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects, selectedProjectId]);
+
+  const reloadTargets = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await ensureLocalApi().devProxy.listTargets();
+      setTargets(result.targets);
+      setStatuses(result.statuses);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to load dev servers",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadTargets();
+  }, [reloadTargets]);
+
+  useEffect(() => {
+    setTargetDrafts(
+      Object.fromEntries(
+        targets.map((target) => [target.id, { label: target.label, targetUrl: target.targetUrl }]),
+      ),
+    );
+  }, [targets]);
+
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const targetsByProject = useMemo(() => {
+    return projects.map((project) => ({
+      project,
+      targets: targets.filter((target) => target.projectId === project.id),
+    }));
+  }, [projects, targets]);
+
+  const saveTarget = useCallback(async () => {
+    if (!selectedProject || !label.trim() || !targetUrl.trim()) return;
+    setSaving(true);
+    try {
+      await ensureLocalApi().devProxy.upsertTarget({
+        target: {
+          projectId: selectedProject.id,
+          workspaceRoot: selectedProject.cwd,
+          label,
+          targetUrl,
+          enabled,
+        },
+      });
+      setLabel("");
+      setTargetUrl("");
+      setEnabled(true);
+      await reloadTargets();
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to save dev server",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [enabled, label, reloadTargets, selectedProject, targetUrl]);
+
+  const updateTarget = useCallback(
+    async (target: DevProxyTarget, patch: Partial<Pick<DevProxyTarget, "label" | "targetUrl" | "enabled">>) => {
+      try {
+        await ensureLocalApi().devProxy.upsertTarget({
+          target: {
+            id: target.id,
+            projectId: target.projectId,
+            workspaceRoot: target.workspaceRoot,
+            label: patch.label ?? target.label,
+            targetUrl: patch.targetUrl ?? target.targetUrl,
+            enabled: patch.enabled ?? target.enabled,
+          },
+        });
+        await reloadTargets();
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update dev server",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [reloadTargets],
+  );
+
+  const removeTarget = useCallback(
+    async (target: DevProxyTarget) => {
+      const confirmed = await ensureLocalApi().dialogs.confirm(`Remove "${target.label}"?`);
+      if (!confirmed) return;
+      await ensureLocalApi().devProxy.removeTarget({
+        projectId: target.projectId,
+        targetId: target.id,
+      });
+      await reloadTargets();
+    },
+    [reloadTargets],
+  );
+
+  const copyRoute = useCallback(async (target: DevProxyTarget) => {
+    await navigator.clipboard.writeText(getPreviewUrl(target.routePath));
+    toastManager.add(stackedThreadToast({ type: "success", title: "Proxy URL copied" }));
+  }, []);
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Dev servers">
+        <SettingsRow
+          title="Add target"
+          description="Proxy a project dev server through a stable T3 Code URL."
+          status={loading ? "Loading saved targets..." : null}
+        >
+          <div className="mt-4 grid gap-3 border-t border-border/60 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+              <SelectTrigger aria-label="Project" className="w-full">
+                <SelectValue>{selectedProject?.name ?? "Select project"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="start" alignItemWithTrigger={false}>
+                {projects.map((project) => (
+                  <SelectItem hideIndicator key={project.id} value={project.id}>
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Input
+              value={label}
+              onChange={(event) => setLabel(event.target.value)}
+              placeholder="Vite"
+              aria-label="Dev server label"
+            />
+            <Input
+              className="sm:col-span-2"
+              value={targetUrl}
+              onChange={(event) => setTargetUrl(event.target.value)}
+              placeholder="http://127.0.0.1:5173"
+              spellCheck={false}
+              aria-label="Dev server target URL"
+            />
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Switch checked={enabled} onCheckedChange={(checked) => setEnabled(Boolean(checked))} />
+              Enabled
+            </div>
+            <div className="flex justify-end">
+              <Button
+                size="xs"
+                disabled={!selectedProject || !label.trim() || !targetUrl.trim() || saving}
+                onClick={() => void saveTarget()}
+              >
+                <PlusIcon className="size-3.5" />
+                {saving ? "Saving..." : "Add target"}
+              </Button>
+            </div>
+          </div>
+        </SettingsRow>
+
+        {targets.length === 0 ? (
+          <div className="border-t border-border/60 px-5 py-8">
+            <Empty>
+              <EmptyMedia>
+                <ExternalLinkIcon className="size-5" />
+              </EmptyMedia>
+              <EmptyHeader>
+                <EmptyTitle>No dev servers</EmptyTitle>
+                <EmptyDescription>Saved proxy targets will appear here.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
+        ) : (
+          targetsByProject.map(({ project, targets }) =>
+            targets.length > 0 ? (
+              <div key={project.id} className="border-t border-border/60">
+                <div className="flex items-center gap-2 px-5 py-3 text-xs font-medium text-muted-foreground">
+                  <ProjectFavicon
+                    environmentId={project.environmentId}
+                    cwd={project.cwd}
+                    className="size-4"
+                  />
+                  <span className="truncate">{project.name}</span>
+                </div>
+                {targets.map((target) => {
+                  const status = getDevProxyStatus(statuses, target.id);
+                  const draft = targetDrafts[target.id] ?? {
+                    label: target.label,
+                    targetUrl: target.targetUrl,
+                  };
+                  return (
+                    <div key={target.id} className="border-t border-border/60 px-5 py-4">
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto] sm:items-center">
+                        <Input
+                          value={draft.label}
+                          onChange={(event) =>
+                            setTargetDrafts((current) => ({
+                              ...current,
+                              [target.id]: {
+                                ...draft,
+                                label: event.target.value,
+                              },
+                            }))
+                          }
+                          aria-label={`${target.label} label`}
+                        />
+                        <Input
+                          value={draft.targetUrl}
+                          onChange={(event) =>
+                            setTargetDrafts((current) => ({
+                              ...current,
+                              [target.id]: {
+                                ...draft,
+                                targetUrl: event.target.value,
+                              },
+                            }))
+                          }
+                          spellCheck={false}
+                          aria-label={`${target.label} URL`}
+                        />
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span
+                            className={cn(
+                              "mr-1 inline-flex size-2 rounded-full",
+                              DEV_PROXY_STATUS_DOT_CLASSNAME[status?.status ?? "unknown"],
+                            )}
+                            title={status?.lastError ?? status?.status ?? "unknown"}
+                          />
+                          <Switch
+                            checked={target.enabled}
+                            onCheckedChange={(checked) =>
+                              void updateTarget(target, { enabled: Boolean(checked) })
+                            }
+                            aria-label={`${target.label} enabled`}
+                          />
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Copy ${target.label} proxy URL`}
+                            onClick={() => void copyRoute(target)}
+                          >
+                            <CopyIcon className="size-3.5" />
+                          </Button>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Open ${target.label} preview`}
+                            onClick={() => void ensureLocalApi().shell.openExternal(getPreviewUrl(target.routePath))}
+                          >
+                            <ExternalLinkIcon className="size-3.5" />
+                          </Button>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Health check ${target.label}`}
+                            onClick={async () => {
+                              const result = await ensureLocalApi().devProxy.healthCheckTarget({
+                                projectId: target.projectId,
+                                targetId: target.id,
+                              });
+                              setStatuses((current) => [
+                                ...current.filter((status) => status.targetId !== result.status.targetId),
+                                result.status,
+                              ]);
+                            }}
+                          >
+                            <RefreshCwIcon className="size-3.5" />
+                          </Button>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Save ${target.label}`}
+                            onClick={() => void updateTarget(target, draft)}
+                          >
+                            <SaveIcon className="size-3.5" />
+                          </Button>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Remove ${target.label}`}
+                            onClick={() => void removeTarget(target)}
+                          >
+                            <Trash2Icon className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="mt-2 truncate font-mono text-[11px] text-muted-foreground">
+                        {target.routePath}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null,
+          )
+        )}
       </SettingsSection>
     </SettingsPageContainer>
   );

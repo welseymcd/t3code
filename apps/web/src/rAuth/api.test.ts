@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildDesktopRAuthCallbackUrl,
   buildRAuthLoginUrl,
   claimAuthorizedT3Server,
   fetchAuthorizedT3Servers,
@@ -59,6 +60,7 @@ describe("r-auth api", () => {
   it("keeps desktop r-auth requests on the current origin", async () => {
     const fetch = vi.fn(async () => Response.json({ ok: true, servers: [] }));
     vi.stubGlobal("fetch", fetch);
+    vi.stubEnv("VITE_R_AUTH_URL", "https://auth.rmcd.cc/api/r-auth");
     vi.stubGlobal("window", {
       location: {
         href: "http://localhost:5734/settings/connections",
@@ -82,8 +84,8 @@ describe("r-auth api", () => {
         method: "GET",
       }),
     );
-    expect(buildRAuthLoginUrl()).toBe(
-      "http://localhost:5734/api/r-auth/dashboard?redirectTo=http%3A%2F%2Flocalhost%3A5734%2Fsettings%2Fconnections",
+    expect(buildRAuthLoginUrl(buildDesktopRAuthCallbackUrl("environment-test"))).toBe(
+      "https://auth.rmcd.cc/dashboard?redirectTo=t3%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FenvironmentId%3Denvironment-test",
     );
   });
 

@@ -316,6 +316,7 @@ const createDesktopBridgeStub = (overrides?: {
     showContextMenu: vi.fn().mockResolvedValue(null),
     openExternal: vi.fn().mockResolvedValue(true),
     onMenuAction: () => () => {},
+    onRAuthCallback: () => () => {},
     getUpdateState: vi.fn().mockResolvedValue(idleUpdateState),
     setUpdateChannel:
       overrides?.setUpdateChannel ??
@@ -694,11 +695,14 @@ describe("GeneralSettingsPanel observability", () => {
       </AppAtomRegistryProvider>,
     );
 
-    const signInLink = page.getByRole("link", { name: "Sign in", exact: true });
-    await expect.element(signInLink).toBeInTheDocument();
-    await expect
-      .element(signInLink)
-      .toHaveAttribute("href", expect.stringContaining("/api/r-auth/dashboard?redirectTo="));
+    const signInButton = page.getByRole("button", { name: "Sign in", exact: true });
+    await expect.element(signInButton).toBeInTheDocument();
+    await signInButton.click();
+    expect(window.desktopBridge.openExternal).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "https://auth.rmcd.cc/dashboard?redirectTo=t3%3A%2F%2Fauth%2Fr-auth%2Fcallback",
+      ),
+    );
   });
 
   it("opens the logs folder in the preferred editor", async () => {

@@ -6,6 +6,10 @@ import {
   type GitStatusStreamEvent,
   type LocalApi,
   ORCHESTRATION_WS_METHODS,
+  type DevProxyHealthCheckTargetInput,
+  type DevProxyListTargetsInput,
+  type DevProxyRemoveTargetInput,
+  type DevProxyUpsertTargetInput,
   type ServerSettingsPatch,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -118,6 +122,20 @@ export interface WsRpcClient {
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
+  };
+  readonly devProxy: {
+    readonly listTargets: (input?: DevProxyListTargetsInput) => ReturnType<
+      RpcUnaryMethod<typeof WS_METHODS.devProxyListTargets>
+    >;
+    readonly upsertTarget: (
+      input: DevProxyUpsertTargetInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.devProxyUpsertTarget>>;
+    readonly removeTarget: (
+      input: DevProxyRemoveTargetInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.devProxyRemoveTarget>>;
+    readonly healthCheckTarget: (
+      input: DevProxyHealthCheckTargetInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.devProxyHealthCheckTarget>>;
   };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
@@ -249,6 +267,16 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           listener,
           options,
         ),
+    },
+    devProxy: {
+      listTargets: (input = {}) =>
+        transport.request((client) => client[WS_METHODS.devProxyListTargets](input)),
+      upsertTarget: (input) =>
+        transport.request((client) => client[WS_METHODS.devProxyUpsertTarget](input)),
+      removeTarget: (input) =>
+        transport.request((client) => client[WS_METHODS.devProxyRemoveTarget](input)),
+      healthCheckTarget: (input) =>
+        transport.request((client) => client[WS_METHODS.devProxyHealthCheckTarget](input)),
     },
     orchestration: {
       dispatchCommand: (input) =>

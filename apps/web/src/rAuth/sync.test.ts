@@ -34,6 +34,8 @@ describe("r-auth environment sync", () => {
       } satisfies Pick<LocalApi, "persistence">,
       setInterval,
       clearInterval,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
     });
     vi.stubGlobal("document", {
       addEventListener: vi.fn(),

@@ -14,6 +14,7 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
+import { Route as SettingsDevServersRouteImport } from './routes/settings.dev-servers'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
@@ -41,6 +42,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   id: '/general',
   path: '/general',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsDevServersRoute = SettingsDevServersRouteImport.update({
+  id: '/dev-servers',
+  path: '/dev-servers',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
@@ -71,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/dev-servers': typeof SettingsDevServersRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -80,6 +87,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/dev-servers': typeof SettingsDevServersRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -92,6 +100,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/dev-servers': typeof SettingsDevServersRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -105,6 +114,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/settings/archived'
     | '/settings/connections'
+    | '/settings/dev-servers'
     | '/settings/general'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -114,6 +124,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/settings/archived'
     | '/settings/connections'
+    | '/settings/dev-servers'
     | '/settings/general'
     | '/'
     | '/$environmentId/$threadId'
@@ -125,6 +136,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/settings/archived'
     | '/settings/connections'
+    | '/settings/dev-servers'
     | '/settings/general'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'

@@ -21,6 +21,7 @@ import {
 import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import type {
   ClientSettings,
+  DesktopRAuthCallbackPayload,
   DesktopTheme,
   DesktopAppBranding,
   DesktopServerExposureMode,
@@ -85,6 +86,7 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
+const R_AUTH_CALLBACK_CHANNEL = "desktop:r-auth-callback";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_SET_CHANNEL_CHANNEL = "desktop:update-set-channel";
@@ -108,8 +110,11 @@ const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
 const CLIENT_SETTINGS_PATH = Path.join(STATE_DIR, "client-settings.json");
 const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments.json");
 const DESKTOP_SCHEME = "t3";
+const R_AUTH_CALLBACK_HOST = "auth";
+const R_AUTH_CALLBACK_PATHNAME = "/r-auth/callback";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+const DEFAULT_R_AUTH_ISSUER = "https://auth.rmcd.cc";
 const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
   isDevelopment,
   appVersion: app.getVersion(),
@@ -213,6 +218,7 @@ let backendAdvertisedHost: string | null = null;
 let backendReadinessAbortController: AbortController | null = null;
 let backendInitialWindowOpenInFlight: Promise<void> | null = null;
 let backendListeningDetector: ServerListeningDetector | null = null;
+const pendingRAuthCallbacks: DesktopRAuthCallbackPayload[] = [];
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
@@ -432,20 +438,98 @@ function isInternalRAuthUrl(candidateUrl: string, ownerUrl: string): boolean {
     const candidate = new URL(candidateUrl);
     const owner = new URL(ownerUrl);
     const backendOrigin = backendHttpUrl ? new URL(backendHttpUrl).origin : null;
+    const rAuthIssuerOrigin = resolveRAuthIssuerOrigin();
+    if (
+      candidate.origin !== owner.origin &&
+      candidate.origin !== backendOrigin &&
+      candidate.origin !== rAuthIssuerOrigin
+    ) {
+      return false;
+    }
+
+    return isRAuthUrlPath(candidate.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function resolveRAuthIssuerOrigin(): string {
+  try {
+    return new URL(process.env.T3CODE_R_AUTH_ISSUER?.trim() || DEFAULT_R_AUTH_ISSUER).origin;
+  } catch {
+    return new URL(DEFAULT_R_AUTH_ISSUER).origin;
+  }
+}
+
+function isRAuthUrlPath(pathname: string): boolean {
+  return (
+    pathname.startsWith("/api/r-auth/") ||
+    pathname === "/dashboard" ||
+    pathname.startsWith("/dashboard/") ||
+    pathname.startsWith("/api/auth/") ||
+    pathname.startsWith("/trpc/") ||
+    pathname.startsWith("/cdn-cgi/")
+  );
+}
+
+function isAppReturnUrl(candidateUrl: string, ownerUrl: string): boolean {
+  try {
+    const candidate = new URL(candidateUrl);
+    const owner = new URL(ownerUrl);
+    const backendOrigin = backendHttpUrl ? new URL(backendHttpUrl).origin : null;
     if (candidate.origin !== owner.origin && candidate.origin !== backendOrigin) {
       return false;
     }
 
     return (
-      candidate.pathname.startsWith("/api/r-auth/") ||
-      candidate.pathname.startsWith("/dashboard/") ||
-      candidate.pathname.startsWith("/api/auth/") ||
-      candidate.pathname.startsWith("/trpc/") ||
-      candidate.pathname.startsWith("/cdn-cgi/")
+      candidate.pathname !== "/vite.svg" &&
+      !candidate.pathname.startsWith("/assets/") &&
+      !isRAuthUrlPath(candidate.pathname)
     );
   } catch {
     return false;
   }
+}
+
+function parseRAuthCallbackUrl(rawUrl: string): DesktopRAuthCallbackPayload | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== `${DESKTOP_SCHEME}:`) {
+    return null;
+  }
+
+  const isCallbackPath =
+    (url.hostname === R_AUTH_CALLBACK_HOST && url.pathname === R_AUTH_CALLBACK_PATHNAME) ||
+    url.pathname === `/${R_AUTH_CALLBACK_HOST}${R_AUTH_CALLBACK_PATHNAME}`;
+  if (!isCallbackPath) {
+    return null;
+  }
+
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const credential =
+    url.searchParams.get("credential") ??
+    url.searchParams.get("grant") ??
+    url.searchParams.get("token") ??
+    hashParams.get("credential") ??
+    hashParams.get("grant") ??
+    hashParams.get("token") ??
+    undefined;
+  const error =
+    url.searchParams.get("error") ??
+    url.searchParams.get("error_description") ??
+    hashParams.get("error") ??
+    hashParams.get("error_description") ??
+    undefined;
+
+  return {
+    ...(credential ? { credential } : {}),
+    ...(error ? { error } : {}),
+  };
 }
 
 function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
@@ -619,6 +703,29 @@ initializePackagedLogging();
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("class", LINUX_WM_CLASS);
 }
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+
+app.on("second-instance", (_event, argv) => {
+  for (const arg of argv) {
+    if (handleExternalProtocolUrl(arg)) {
+      return;
+    }
+  }
+
+  const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0];
+  if (existingWindow) {
+    revealWindow(existingWindow);
+  }
+});
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleExternalProtocolUrl(url);
+});
 
 function getDestructiveMenuIcon(): Electron.NativeImage | undefined {
   if (process.platform !== "darwin") return undefined;
@@ -882,6 +989,54 @@ function dispatchMenuAction(action: string): void {
   send();
 }
 
+function dispatchRAuthCallback(payload: DesktopRAuthCallbackPayload): void {
+  const existingWindow =
+    BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
+  const targetWindow = existingWindow ?? createWindow();
+  if (!existingWindow) {
+    mainWindow = targetWindow;
+  }
+
+  const send = () => {
+    if (targetWindow.isDestroyed()) return;
+    targetWindow.webContents.send(R_AUTH_CALLBACK_CHANNEL, payload);
+    revealWindow(targetWindow);
+  };
+
+  if (targetWindow.webContents.isLoadingMainFrame()) {
+    targetWindow.webContents.once("did-finish-load", send);
+    return;
+  }
+
+  send();
+}
+
+function handleExternalProtocolUrl(rawUrl: string): boolean {
+  const payload = parseRAuthCallbackUrl(rawUrl);
+  if (!payload) {
+    return false;
+  }
+
+  writeDesktopLogHeader(
+    `received r-auth callback credential=${payload.credential ? "present" : "missing"} error=${
+      payload.error ? sanitizeLogValue(payload.error) : "none"
+    }`,
+  );
+  if (!app.isReady()) {
+    pendingRAuthCallbacks.push(payload);
+    return true;
+  }
+
+  dispatchRAuthCallback(payload);
+  return true;
+}
+
+function flushPendingRAuthCallbacks(): void {
+  for (const payload of pendingRAuthCallbacks.splice(0)) {
+    dispatchRAuthCallback(payload);
+  }
+}
+
 function handleCheckForUpdatesMenuClick(): void {
   const hasUpdateFeedConfig =
     readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
@@ -1071,8 +1226,36 @@ function resolveUserDataPath(): string {
   return Path.join(appDataBase, USER_DATA_DIR_NAME);
 }
 
+function isDesktopProtocolUrl(rawValue: string): boolean {
+  try {
+    return new URL(rawValue).protocol === `${DESKTOP_SCHEME}:`;
+  } catch {
+    return false;
+  }
+}
+
+function resolveDefaultAppProtocolArgs(): string[] {
+  return process.argv
+    .slice(1)
+    .filter((arg) => !isDesktopProtocolUrl(arg))
+    .filter((arg) => arg !== "--");
+}
+
 function configureAppIdentity(): void {
   app.setName(APP_DISPLAY_NAME);
+  if (process.defaultApp) {
+    if (process.platform === "win32") {
+      const args = resolveDefaultAppProtocolArgs();
+      if (args.length > 0) {
+        app.setAsDefaultProtocolClient(DESKTOP_SCHEME, process.execPath, args);
+      }
+    } else {
+      writeDesktopLogHeader("skipping default protocol registration for unpackaged Electron app");
+    }
+  } else {
+    app.setAsDefaultProtocolClient(DESKTOP_SCHEME);
+  }
+
   const commitHash = resolveAboutCommitHash();
   app.setAboutPanelOptions({
     applicationName: APP_DISPLAY_NAME,
@@ -2005,6 +2188,7 @@ function createWindow(): BrowserWindow {
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isInternalRAuthUrl(url, window.webContents.getURL())) {
+      const ownerUrl = window.webContents.getURL();
       const authWindow = new BrowserWindow({
         width: 760,
         height: 820,
@@ -2021,7 +2205,29 @@ function createWindow(): BrowserWindow {
           sandbox: true,
         },
       });
+      const closeIfReturnedToApp = (nextUrl: string): boolean => {
+        if (!isAppReturnUrl(nextUrl, ownerUrl)) {
+          return false;
+        }
+        authWindow.close();
+        window.focus();
+        return true;
+      };
+      authWindow.webContents.on("will-navigate", (event, nextUrl) => {
+        if (closeIfReturnedToApp(nextUrl)) {
+          event.preventDefault();
+        }
+      });
+      authWindow.webContents.on("will-redirect", (event, nextUrl) => {
+        if (closeIfReturnedToApp(nextUrl)) {
+          event.preventDefault();
+        }
+      });
       authWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+        if (isInternalRAuthUrl(popupUrl, ownerUrl)) {
+          void authWindow.loadURL(popupUrl);
+          return { action: "deny" };
+        }
         const externalUrl = getSafeExternalUrl(popupUrl);
         if (externalUrl) {
           void shell.openExternal(externalUrl);
@@ -2134,11 +2340,14 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap backend start requested");
 
   if (isDevelopment) {
-    mainWindow = createWindow();
-    writeDesktopLogHeader("bootstrap main window created");
     void waitForBackendWindowReady(backendHttpUrl)
       .then((source) => {
         writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
+        if (mainWindow ?? BrowserWindow.getAllWindows()[0]) {
+          return;
+        }
+        mainWindow = createWindow();
+        writeDesktopLogHeader("bootstrap main window created");
       })
       .catch((error) => {
         if (isBackendReadinessAborted(error)) {
@@ -2148,6 +2357,11 @@ async function bootstrap(): Promise<void> {
           `bootstrap backend readiness warning message=${formatErrorMessage(error)}`,
         );
         console.warn("[desktop] backend readiness check timed out during dev bootstrap", error);
+        if (mainWindow ?? BrowserWindow.getAllWindows()[0]) {
+          return;
+        }
+        mainWindow = createWindow();
+        writeDesktopLogHeader("bootstrap main window created after backend readiness timeout");
       });
     return;
   }
@@ -2179,6 +2393,10 @@ app
       }
       handleFatalStartupError("bootstrap", error);
     });
+    for (const arg of process.argv) {
+      handleExternalProtocolUrl(arg);
+    }
+    flushPendingRAuthCallbacks();
 
     app.on("activate", () => {
       const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0];

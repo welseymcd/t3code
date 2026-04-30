@@ -66,6 +66,7 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { DevProxyRegistry } from "./devProxy.ts";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -157,6 +158,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const serverAuth = yield* ServerAuth;
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
+      const devProxyRegistry = yield* DevProxyRegistry;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -779,6 +781,28 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             WS_METHODS.serverPing,
             Effect.sync(() => ({ serverTime: new Date().toISOString() })),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.devProxyListTargets]: (input) =>
+          observeRpcEffect(WS_METHODS.devProxyListTargets, devProxyRegistry.listTargets(input), {
+            "rpc.aggregate": "devProxy",
+          }),
+        [WS_METHODS.devProxyUpsertTarget]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.devProxyUpsertTarget,
+            devProxyRegistry.upsertTarget(input),
+            { "rpc.aggregate": "devProxy" },
+          ),
+        [WS_METHODS.devProxyRemoveTarget]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.devProxyRemoveTarget,
+            devProxyRegistry.removeTarget(input),
+            { "rpc.aggregate": "devProxy" },
+          ),
+        [WS_METHODS.devProxyHealthCheckTarget]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.devProxyHealthCheckTarget,
+            devProxyRegistry.healthCheckTarget(input),
+            { "rpc.aggregate": "devProxy" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(

@@ -5,6 +5,7 @@ import {
   resolveDevRedirectUrl,
   resolveRAuthDashboardAbsoluteTargetUrl,
   resolveRAuthProxyTargetUrl,
+  rewriteRAuthProxyRequestJsonBody,
   rewriteRAuthProxyLocation,
   rewriteRAuthProxyTextContent,
 } from "./http.ts";
@@ -101,6 +102,35 @@ describe("http dev routing", () => {
         "http://127.0.0.1:3773",
       ),
     ).toBe("http://127.0.0.1:3773/api/r-auth/dashboard?tab=t3");
+  });
+
+  it("normalizes accidental proxied r-auth redirects before rewriting to the local proxy", () => {
+    expect(
+      rewriteRAuthProxyLocation(
+        { rAuthIssuer: "https://auth.example.com" },
+        "https://auth.example.com/api/r-auth/dashboard/?tab=t3",
+        "http://127.0.0.1:3773",
+      ),
+    ).toBe("http://127.0.0.1:3773/api/r-auth/dashboard/?tab=t3");
+  });
+
+  it("normalizes proxied callback URLs in r-auth request bodies before forwarding upstream", () => {
+    expect(
+      rewriteRAuthProxyRequestJsonBody(
+        {
+          callbackURL: "http://127.0.0.1:3773/api/r-auth/dashboard/?tab=t3",
+          nested: {
+            next: "/api/r-auth/dashboard?redirectTo=http%3A%2F%2F127.0.0.1%3A3773%2Fsettings",
+          },
+        },
+        "https://auth.example.com",
+      ),
+    ).toEqual({
+      callbackURL: "https://auth.example.com/dashboard/?tab=t3",
+      nested: {
+        next: "/dashboard?redirectTo=http%3A%2F%2F127.0.0.1%3A3773%2Fsettings",
+      },
+    });
   });
 
   it("rewrites r-auth dashboard asset and API paths through the local proxy", () => {

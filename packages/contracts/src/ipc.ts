@@ -1,4 +1,14 @@
 import type {
+  DevProxyHealthCheckTargetInput,
+  DevProxyHealthCheckTargetResult,
+  DevProxyListTargetsInput,
+  DevProxyListTargetsResult,
+  DevProxyRemoveTargetInput,
+  DevProxyRemoveTargetResult,
+  DevProxyUpsertTargetInput,
+  DevProxyUpsertTargetResult,
+} from "./devProxy.ts";
+import type {
   GitCheckoutInput,
   GitCheckoutResult,
   GitCloneRepositoryInput,
@@ -152,6 +162,11 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
 }
 
+export interface DesktopRAuthCallbackPayload {
+  credential?: string;
+  error?: string;
+}
+
 export interface PickFolderOptions {
   initialPath?: string | null;
 }
@@ -179,6 +194,7 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  onRAuthCallback: (listener: (payload: DesktopRAuthCallbackPayload) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
@@ -229,6 +245,14 @@ export interface LocalApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+  devProxy: {
+    listTargets: (input?: DevProxyListTargetsInput) => Promise<DevProxyListTargetsResult>;
+    upsertTarget: (input: DevProxyUpsertTargetInput) => Promise<DevProxyUpsertTargetResult>;
+    removeTarget: (input: DevProxyRemoveTargetInput) => Promise<DevProxyRemoveTargetResult>;
+    healthCheckTarget: (
+      input: DevProxyHealthCheckTargetInput,
+    ) => Promise<DevProxyHealthCheckTargetResult>;
   };
 }
 

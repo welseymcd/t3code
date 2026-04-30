@@ -153,11 +153,16 @@ export function startRAuthEnvironmentSyncService(): () => void {
         runSync();
       }
     };
+    const handleFocus = () => {
+      runSync();
+    };
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
     runSync();
     activeCleanup = () => {
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
       activeCleanup = null;
     };
   }

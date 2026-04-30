@@ -5,6 +5,17 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { OpenError, OpenInEditorInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
 import {
+  DevProxyError,
+  DevProxyHealthCheckTargetInput,
+  DevProxyHealthCheckTargetResult,
+  DevProxyListTargetsInput,
+  DevProxyListTargetsResult,
+  DevProxyRemoveTargetInput,
+  DevProxyRemoveTargetResult,
+  DevProxyUpsertTargetInput,
+  DevProxyUpsertTargetResult,
+} from "./devProxy.ts";
+import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -131,6 +142,12 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   serverPing: "server.ping",
 
+  // Dev proxy methods
+  devProxyListTargets: "devProxy.listTargets",
+  devProxyUpsertTarget: "devProxy.upsertTarget",
+  devProxyRemoveTarget: "devProxy.removeTarget",
+  devProxyHealthCheckTarget: "devProxy.healthCheckTarget",
+
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -175,6 +192,30 @@ export const WsServerPingRpc = Rpc.make(WS_METHODS.serverPing, {
   success: Schema.Struct({
     serverTime: Schema.String,
   }),
+});
+
+export const WsDevProxyListTargetsRpc = Rpc.make(WS_METHODS.devProxyListTargets, {
+  payload: DevProxyListTargetsInput,
+  success: DevProxyListTargetsResult,
+  error: DevProxyError,
+});
+
+export const WsDevProxyUpsertTargetRpc = Rpc.make(WS_METHODS.devProxyUpsertTarget, {
+  payload: DevProxyUpsertTargetInput,
+  success: DevProxyUpsertTargetResult,
+  error: DevProxyError,
+});
+
+export const WsDevProxyRemoveTargetRpc = Rpc.make(WS_METHODS.devProxyRemoveTarget, {
+  payload: DevProxyRemoveTargetInput,
+  success: DevProxyRemoveTargetResult,
+  error: DevProxyError,
+});
+
+export const WsDevProxyHealthCheckTargetRpc = Rpc.make(WS_METHODS.devProxyHealthCheckTarget, {
+  payload: DevProxyHealthCheckTargetInput,
+  success: DevProxyHealthCheckTargetResult,
+  error: DevProxyError,
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -401,6 +442,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerPingRpc,
+  WsDevProxyListTargetsRpc,
+  WsDevProxyUpsertTargetRpc,
+  WsDevProxyRemoveTargetRpc,
+  WsDevProxyHealthCheckTargetRpc,
   WsProjectsListDirectoryRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchEntriesRpc,

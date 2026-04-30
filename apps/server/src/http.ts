@@ -1,5 +1,5 @@
 import Mime from "@effect/platform-node/Mime";
-import { Data, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Data, Duration, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { cast } from "effect/Function";
 import {
   HttpBody,
@@ -10,6 +10,7 @@ import {
   HttpServerRequest,
 } from "effect/unstable/http";
 import { OtlpTracer } from "effect/unstable/observability";
+import * as Socket from "effect/unstable/socket/Socket";
 
 import {
   ATTACHMENTS_ROUTE_PREFIX,
@@ -23,6 +24,13 @@ import { BrowserTraceCollector } from "./observability/Services/BrowserTraceColl
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import {
+  DevProxyRegistry,
+  parseDevProxyRoute,
+  resolveDevProxyUpstreamUrl,
+  rewriteDevProxyLocation,
+  validateDevProxyTargetUrl,
+} from "./devProxy.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
@@ -39,6 +47,17 @@ const R_AUTH_PROXY_ALLOWED_PREFIXES = [
   "/trpc/",
 ] as const;
 const R_AUTH_PROXY_ALLOWED_DASHBOARD_PREFIXES = ["/dashboard/"] as const;
+const DEV_PROXY_TIMEOUT_MS = 30_000;
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: ["GET", "POST", "OPTIONS"],
@@ -93,6 +112,26 @@ export function resolveRAuthProxyTargetUrl(
   return upstreamUrl.toString();
 }
 
+function isAllowedRAuthProxyUpstreamPathname(upstreamPathname: string): boolean {
+  return (
+    R_AUTH_PROXY_ALLOWED_EXACT_PATHS.has(upstreamPathname) ||
+    R_AUTH_PROXY_ALLOWED_PREFIXES.some((prefix) => upstreamPathname.startsWith(prefix)) ||
+    R_AUTH_PROXY_ALLOWED_DASHBOARD_PREFIXES.some((prefix) => upstreamPathname.startsWith(prefix))
+  );
+}
+
+function stripRAuthProxyPrefixFromPathname(pathname: string): string | null {
+  if (pathname === R_AUTH_PROXY_PREFIX) {
+    return "/";
+  }
+  if (!pathname.startsWith(`${R_AUTH_PROXY_PREFIX}/`)) {
+    return null;
+  }
+
+  const upstreamPathname = pathname.slice(R_AUTH_PROXY_PREFIX.length);
+  return isAllowedRAuthProxyUpstreamPathname(upstreamPathname) ? upstreamPathname : null;
+}
+
 export function resolveRAuthDashboardAbsoluteTargetUrl(
   config: Pick<ServerConfigShape, "rAuthIssuer">,
   requestPathname: string,
@@ -125,12 +164,86 @@ export function rewriteRAuthProxyLocation(
     return location;
   }
 
+  locationUrl.pathname =
+    stripRAuthProxyPrefixFromPathname(locationUrl.pathname) ?? locationUrl.pathname;
+
   return `${requestOrigin}${R_AUTH_PROXY_PREFIX}${locationUrl.pathname}${locationUrl.search}${locationUrl.hash}`;
 }
 
 function pickHeader(headers: Readonly<Record<string, string>>, name: string): string | undefined {
   const value = headers[name.toLowerCase()];
   return value && value.length > 0 ? value : undefined;
+}
+
+function isWebSocketUpgrade(headers: Readonly<Record<string, string>>): boolean {
+  return headers.upgrade?.toLowerCase() === "websocket";
+}
+
+function splitConnectionHeader(value: string | undefined): ReadonlySet<string> {
+  if (!value) {
+    return new Set();
+  }
+  return new Set(
+    value
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export function stripDevProxyHopByHopHeaders(
+  headers: Readonly<Record<string, string>>,
+  options?: { readonly keepUpgrade?: boolean },
+): Record<string, string> {
+  const connectionHeaders = splitConnectionHeader(headers.connection);
+  const strippedHeaders: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const normalizedName = name.toLowerCase();
+    if (connectionHeaders.has(normalizedName)) {
+      continue;
+    }
+    if (HOP_BY_HOP_HEADERS.has(normalizedName)) {
+      if (options?.keepUpgrade && normalizedName === "upgrade") {
+        strippedHeaders[name] = value;
+      }
+      continue;
+    }
+    if (normalizedName === "host" || normalizedName === "authorization" || normalizedName === "cookie") {
+      continue;
+    }
+    strippedHeaders[name] = value;
+  }
+  return strippedHeaders;
+}
+
+function mapDevProxyErrorStatus(error: unknown): number {
+  if (error && typeof error === "object" && "_tag" in error && error._tag === "DevProxyError") {
+    const code = (error as { code?: string }).code;
+    if (code === "not_found") return 404;
+    if (code === "disabled" || code === "forbidden" || code === "invalid_target") return 403;
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return 504;
+  }
+  return 502;
+}
+
+function formatDevProxyError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name;
+  }
+  if (error && typeof error === "object" && "_tag" in error) {
+    return String(error._tag);
+  }
+  return typeof error;
+}
+
+class DevProxyUpstreamError extends Data.TaggedError("DevProxyUpstreamError")<{
+  readonly cause: unknown;
+}> {}
+
+function isBodylessMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD";
 }
 
 class RAuthProxyError extends Data.TaggedError("RAuthProxyError")<{
@@ -148,6 +261,47 @@ export function rewriteRAuthProxyTextContent(content: string): string {
     .replaceAll("'/trpc", `'/api/r-auth/trpc`)
     .replaceAll('"/vite.svg"', `"/api/r-auth/vite.svg"`)
     .replaceAll("'/vite.svg'", `'/api/r-auth/vite.svg'`);
+}
+
+function rewriteRAuthProxyOutboundString(value: string, upstreamOrigin: string): string {
+  let url: URL;
+  try {
+    url = new URL(value, upstreamOrigin);
+  } catch {
+    return value;
+  }
+
+  const upstreamPathname = stripRAuthProxyPrefixFromPathname(url.pathname);
+  if (upstreamPathname === null) {
+    return value;
+  }
+
+  const rewrittenUrl = new URL(upstreamOrigin);
+  rewrittenUrl.pathname = upstreamPathname;
+  rewrittenUrl.search = url.search;
+  rewrittenUrl.hash = url.hash;
+
+  return value.startsWith("/")
+    ? `${rewrittenUrl.pathname}${rewrittenUrl.search}${rewrittenUrl.hash}`
+    : rewrittenUrl.toString();
+}
+
+export function rewriteRAuthProxyRequestJsonBody(value: unknown, upstreamOrigin: string): unknown {
+  if (typeof value === "string") {
+    return rewriteRAuthProxyOutboundString(value, upstreamOrigin);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => rewriteRAuthProxyRequestJsonBody(entry, upstreamOrigin));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        rewriteRAuthProxyRequestJsonBody(entry, upstreamOrigin),
+      ]),
+    );
+  }
+  return value;
 }
 
 function shouldRewriteRAuthProxyTextContent(contentType: string | null): boolean {
@@ -200,7 +354,9 @@ const rAuthProxyHandler = Effect.gen(function* () {
 
   const method = request.method.toUpperCase();
   const body =
-    method === "GET" || method === "HEAD" ? undefined : JSON.stringify(yield* request.json);
+    method === "GET" || method === "HEAD"
+      ? undefined
+      : JSON.stringify(rewriteRAuthProxyRequestJsonBody(yield* request.json, upstreamOrigin));
 
   const upstreamResponse = yield* Effect.tryPromise({
     try: () =>
@@ -260,6 +416,200 @@ export const rAuthProxyRouteLayer = Layer.mergeAll(
   HttpRouter.add("GET", "/dashboard/*", rAuthProxyHandler),
   HttpRouter.add("GET", "/vite.svg", rAuthProxyHandler),
   HttpRouter.add("POST", "/cdn-cgi/*", HttpServerResponse.empty({ status: 204 })),
+);
+
+const devProxyWebSocketHandler = (input: {
+  readonly request: HttpServerRequest.HttpServerRequest;
+  readonly targetUrl: string;
+  readonly suffixPath: string;
+  readonly search: string;
+}) =>
+  Effect.gen(function* () {
+    const upstreamUrl = resolveDevProxyUpstreamUrl({
+      targetUrl: input.targetUrl,
+      suffixPath: input.suffixPath,
+      search: input.search,
+      transport: "websocket",
+    });
+    const downstream = yield* input.request.upgrade;
+    const upstream = yield* Socket.makeWebSocket(upstreamUrl.toString(), {
+      openTimeout: Duration.seconds(10),
+      closeCodeIsError: () => false,
+    }).pipe(
+      Effect.provideService(
+        Socket.WebSocketConstructor,
+        (url, protocols) => new WebSocket(url, protocols),
+      ),
+    );
+    const downstreamWriter = yield* downstream.writer;
+    const upstreamWriter = yield* upstream.writer;
+    const closeBoth = Effect.all(
+      [
+        downstreamWriter(new Socket.CloseEvent(1000)).pipe(Effect.ignore),
+        upstreamWriter(new Socket.CloseEvent(1000)).pipe(Effect.ignore),
+      ],
+      { discard: true },
+    );
+
+    yield* Effect.raceFirst(
+      downstream.runRaw((chunk) => upstreamWriter(chunk)),
+      upstream.runRaw((chunk) => downstreamWriter(chunk)),
+    ).pipe(Effect.ensuring(closeBoth));
+
+    return HttpServerResponse.empty({ status: 204 });
+  });
+
+const devProxyHandler = Effect.gen(function* () {
+  const startedAt = performance.now();
+  yield* requireAuthenticatedRequest;
+
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const requestUrl = HttpServerRequest.toURL(request);
+  if (Option.isNone(requestUrl)) {
+    return HttpServerResponse.text("Bad Request", { status: 400 });
+  }
+
+  const route = parseDevProxyRoute(requestUrl.value.pathname);
+  if (!route) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+
+  const registry = yield* DevProxyRegistry;
+  const target = yield* registry.getTarget(route.projectId, route.targetId);
+  if (!target.enabled) {
+    return yield* new DevProxyUpstreamError({
+      cause: {
+        _tag: "DevProxyError",
+        code: "disabled",
+        message: "Dev proxy target is disabled.",
+      },
+    });
+  }
+  const validation = validateDevProxyTargetUrl(target.targetUrl);
+  if (!validation.ok || !validation.normalizedUrl) {
+    return yield* new DevProxyUpstreamError({
+      cause: {
+        _tag: "DevProxyError",
+        code: "forbidden",
+        message: validation.reason ?? "Dev proxy target is not allowed.",
+      },
+    });
+  }
+
+  const method = request.method.toUpperCase();
+  const upstreamUrl = resolveDevProxyUpstreamUrl({
+    targetUrl: validation.normalizedUrl,
+    suffixPath: route.suffixPath,
+    search: requestUrl.value.search,
+    transport: "http",
+  });
+
+  if (isWebSocketUpgrade(request.headers)) {
+    return yield* devProxyWebSocketHandler({
+      request,
+      targetUrl: validation.normalizedUrl,
+      suffixPath: route.suffixPath,
+      search: requestUrl.value.search,
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("dev proxy websocket failed", {
+          projectId: target.projectId,
+          targetId: target.id,
+          durationMs: Math.round(performance.now() - startedAt),
+          errorClass: formatDevProxyError(error),
+        }),
+      ),
+      Effect.catchAll(() => Effect.succeed(HttpServerResponse.text("WebSocket proxy failed.", { status: 502 }))),
+    );
+  }
+
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), DEV_PROXY_TIMEOUT_MS);
+  const requestHeaders = stripDevProxyHopByHopHeaders(request.headers);
+  requestHeaders.host = upstreamUrl.host;
+  const body = isBodylessMethod(method) ? undefined : Stream.toReadableStream(request.stream);
+
+  const upstreamResponse = yield* Effect.tryPromise({
+    try: () =>
+      fetch(upstreamUrl, {
+        method,
+        headers: requestHeaders,
+        body,
+        redirect: "manual",
+        signal: abortController.signal,
+        ...(body ? { duplex: "half" as const } : {}),
+      } as RequestInit & { duplex?: "half" }),
+    catch: (cause) => new DevProxyUpstreamError({ cause }),
+  }).pipe(Effect.ensuring(Effect.sync(() => clearTimeout(timeout))));
+
+  const responseHeaders = stripDevProxyHopByHopHeaders(
+    Object.fromEntries(upstreamResponse.headers.entries()),
+  );
+  const location = upstreamResponse.headers.get("location");
+  if (location) {
+    responseHeaders.location = rewriteDevProxyLocation({
+      location,
+      requestOrigin: requestUrl.value.origin,
+      proxyRoutePath: target.routePath,
+      targetUrl: validation.normalizedUrl,
+    });
+  }
+
+  yield* Effect.logDebug("dev proxy request", {
+    projectId: target.projectId,
+    targetId: target.id,
+    statusCode: upstreamResponse.status,
+    durationMs: Math.round(performance.now() - startedAt),
+  });
+
+  if (!upstreamResponse.body || method === "HEAD") {
+    return HttpServerResponse.empty({
+      status: upstreamResponse.status,
+      headers: responseHeaders,
+    });
+  }
+
+  return HttpServerResponse.stream(
+    Stream.fromReadableStream({
+      evaluate: () => upstreamResponse.body!,
+      onError: (cause) => new DevProxyUpstreamError({ cause }),
+    }),
+    {
+      status: upstreamResponse.status,
+      headers: responseHeaders,
+    },
+  );
+}).pipe(
+  Effect.catchTag("AuthError", respondToAuthError),
+  Effect.catchAll((error) =>
+    Effect.gen(function* () {
+      const cause = error instanceof DevProxyUpstreamError ? error.cause : error;
+      const status = mapDevProxyErrorStatus(cause);
+      yield* Effect.logWarning("dev proxy request failed", {
+        statusCode: status,
+        errorClass: formatDevProxyError(cause),
+      });
+      const message =
+        status === 404
+          ? "Dev proxy target was not found."
+          : status === 403
+            ? "Dev proxy target is forbidden."
+            : status === 504
+              ? "Dev proxy upstream timed out."
+              : "Dev proxy upstream request failed.";
+      return HttpServerResponse.text(message, { status });
+    }),
+  ),
+);
+
+export const devProxyRouteLayer = Layer.mergeAll(
+  HttpRouter.add("GET", "/proxy/projects/*", devProxyHandler),
+  HttpRouter.add("POST", "/proxy/projects/*", devProxyHandler),
+  HttpRouter.add("PUT", "/proxy/projects/*", devProxyHandler),
+  HttpRouter.add("PATCH", "/proxy/projects/*", devProxyHandler),
+  HttpRouter.add("DELETE", "/proxy/projects/*", devProxyHandler),
+  HttpRouter.add("OPTIONS", "/proxy/projects/*", devProxyHandler),
+  HttpRouter.add("HEAD", "/proxy/projects/*", devProxyHandler),
 );
 
 export const serverEnvironmentRouteLayer = HttpRouter.add(

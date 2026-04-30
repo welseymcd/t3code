@@ -127,6 +127,7 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
     },
+    devProxy: rpcClient.devProxy,
   };
 }
 

@@ -52,6 +52,8 @@ export class RAuthHttpError extends Error {
 
 const R_AUTH_PROXY_PREFIX = "/api/r-auth";
 const DEFAULT_R_AUTH_PROXY_BASE_URL = R_AUTH_PROXY_PREFIX;
+const DEFAULT_R_AUTH_ISSUER = "https://auth.rmcd.cc";
+export const DESKTOP_R_AUTH_CALLBACK_URL = "t3://auth/r-auth/callback";
 
 function normalizeConfiguredRAuthBaseUrl(configured: string): string {
   const url = new URL(configured, window.location.origin);
@@ -65,10 +67,25 @@ function normalizeConfiguredRAuthBaseUrl(configured: string): string {
 }
 
 function resolveRAuthBaseUrl(): string {
+  if (window.desktopBridge) {
+    return DEFAULT_R_AUTH_PROXY_BASE_URL;
+  }
+
   const configured = import.meta.env.VITE_R_AUTH_URL?.trim();
   return configured && configured.length > 0
     ? normalizeConfiguredRAuthBaseUrl(configured)
     : DEFAULT_R_AUTH_PROXY_BASE_URL;
+}
+
+function resolveRAuthLoginBaseUrl(): string {
+  if (window.desktopBridge) {
+    const configured = import.meta.env.VITE_R_AUTH_URL?.trim();
+    return configured && configured.length > 0
+      ? normalizeConfiguredRAuthBaseUrl(configured)
+      : DEFAULT_R_AUTH_ISSUER;
+  }
+
+  return resolveRAuthBaseUrl();
 }
 
 function resolveRAuthUrl(pathname: string): string {
@@ -79,8 +96,16 @@ function resolveRAuthUrl(pathname: string): string {
   return url.toString();
 }
 
+export function buildDesktopRAuthCallbackUrl(environmentId?: string | null): string {
+  const url = new URL(DESKTOP_R_AUTH_CALLBACK_URL);
+  if (environmentId) {
+    url.searchParams.set("environmentId", environmentId);
+  }
+  return url.toString();
+}
+
 export function buildRAuthLoginUrl(returnTo: string = window.location.href): string {
-  const url = new URL(resolveRAuthBaseUrl(), window.location.origin);
+  const url = new URL(resolveRAuthLoginBaseUrl(), window.location.origin);
   url.pathname = `${url.pathname.replace(/\/$/, "")}/dashboard`;
   url.search = "";
   url.hash = "";
