@@ -63,6 +63,7 @@ const clientSettings: ClientSettings = {
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   timestampFormat: "24-hour",
+  workspaceFileOpenMode: "external",
 };
 
 const savedRegistryRecord: PersistedSavedEnvironmentRecord = {

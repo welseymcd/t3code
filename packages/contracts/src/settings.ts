@@ -28,6 +28,10 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
+export const WorkspaceFileOpenMode = Schema.Literals(["external", "internal"]);
+export type WorkspaceFileOpenMode = typeof WorkspaceFileOpenMode.Type;
+export const DEFAULT_WORKSPACE_FILE_OPEN_MODE: WorkspaceFileOpenMode = "external";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -74,6 +78,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  workspaceFileOpenMode: WorkspaceFileOpenMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKSPACE_FILE_OPEN_MODE)),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -482,5 +489,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  workspaceFileOpenMode: Schema.optionalKey(WorkspaceFileOpenMode),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

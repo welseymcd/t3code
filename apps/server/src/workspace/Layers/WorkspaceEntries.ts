@@ -4,7 +4,11 @@ import type { Dirent } from "node:fs";
 
 import { Cache, DateTime, Duration, Effect, Exit, Layer, Path } from "effect";
 
-import { type FilesystemBrowseInput, type ProjectEntry } from "@t3tools/contracts";
+import {
+  PROJECT_LIST_DIRECTORY_MAX_LIMIT,
+  type FilesystemBrowseInput,
+  type ProjectEntry,
+} from "@t3tools/contracts";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
   insertRankedSearchResult,
@@ -79,6 +83,13 @@ function basenameOf(input: string): string {
     return input;
   }
   return input.slice(separatorIndex + 1);
+}
+
+function sortProjectEntries(left: ProjectEntry, right: ProjectEntry): number {
+  if (left.kind !== right.kind) {
+    return left.kind === "directory" ? -1 : 1;
+  }
+  return left.path.localeCompare(right.path);
 }
 
 function toSearchableWorkspaceEntry(entry: ProjectEntry): SearchableWorkspaceEntry {
@@ -468,6 +479,78 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const listDirectory: WorkspaceEntriesShape["listDirectory"] = Effect.fn(
+    "WorkspaceEntries.listDirectory",
+  )(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    const limit = Math.min(
+      input.limit ?? PROJECT_LIST_DIRECTORY_MAX_LIMIT,
+      PROJECT_LIST_DIRECTORY_MAX_LIMIT,
+    );
+    const target = input.parentPath
+      ? yield* workspacePaths
+          .resolveRelativePathWithinRoot({
+            workspaceRoot: normalizedCwd,
+            relativePath: input.parentPath,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorkspaceEntriesError({
+                  cwd: input.cwd,
+                  operation: "workspaceEntries.listDirectory.resolveParent",
+                  detail: cause.message,
+                  cause,
+                }),
+            ),
+          )
+      : { absolutePath: normalizedCwd, relativePath: "" };
+
+    const dirents = yield* Effect.tryPromise({
+      try: () => fsPromises.readdir(target.absolutePath, { withFileTypes: true }),
+      catch: (cause) =>
+        new WorkspaceEntriesError({
+          cwd: input.cwd,
+          operation: "workspaceEntries.listDirectory.readDirectory",
+          detail: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+    });
+
+    const entries = dirents
+      .flatMap((dirent): ProjectEntry[] => {
+        if (!dirent.name || dirent.name === "." || dirent.name === "..") {
+          return [];
+        }
+        if (dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)) {
+          return [];
+        }
+        if (!dirent.isDirectory() && !dirent.isFile()) {
+          return [];
+        }
+
+        const entryPath = toPosixPath(
+          target.relativePath ? path.join(target.relativePath, dirent.name) : dirent.name,
+        );
+        if (isPathInIgnoredDirectory(entryPath)) {
+          return [];
+        }
+        return [
+          {
+            path: entryPath,
+            kind: dirent.isDirectory() ? "directory" : "file",
+            parentPath: parentPathOf(entryPath),
+          },
+        ];
+      })
+      .toSorted(sortProjectEntries);
+
+    return {
+      entries: entries.slice(0, limit),
+      truncated: entries.length > limit,
+    };
+  });
+
   const search: WorkspaceEntriesShape["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
@@ -506,6 +589,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   return {
     browse,
     invalidate,
+    listDirectory,
     search,
   } satisfies WorkspaceEntriesShape;
 });

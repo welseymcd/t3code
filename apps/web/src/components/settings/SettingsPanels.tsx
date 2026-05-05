@@ -392,6 +392,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(settings.workspaceFileOpenMode !== DEFAULT_UNIFIED_SETTINGS.workspaceFileOpenMode
+        ? ["Workspace file links"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -422,6 +425,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
+      settings.workspaceFileOpenMode,
       theme,
     ],
   );
@@ -969,6 +973,47 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Open the task panel automatically"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Workspace file links"
+          description="Choose where terminal and chat file links open."
+          resetAction={
+            settings.workspaceFileOpenMode !== DEFAULT_UNIFIED_SETTINGS.workspaceFileOpenMode ? (
+              <SettingResetButton
+                label="workspace file links"
+                onClick={() =>
+                  updateSettings({
+                    workspaceFileOpenMode: DEFAULT_UNIFIED_SETTINGS.workspaceFileOpenMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.workspaceFileOpenMode}
+              onValueChange={(value) => {
+                if (value === "external" || value === "internal") {
+                  updateSettings({ workspaceFileOpenMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Workspace file link target">
+                <SelectValue>
+                  {settings.workspaceFileOpenMode === "internal" ? "T3 Code" : "External editor"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="external">
+                  External editor
+                </SelectItem>
+                <SelectItem hideIndicator value="internal">
+                  T3 Code
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

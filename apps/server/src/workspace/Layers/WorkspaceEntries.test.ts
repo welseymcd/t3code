@@ -69,6 +69,12 @@ const searchWorkspaceEntries = (input: { cwd: string; query: string; limit: numb
     return yield* workspaceEntries.search(input);
   });
 
+const listWorkspaceDirectory = (input: { cwd: string; parentPath?: string; limit?: number }) =>
+  Effect.gen(function* () {
+    const workspaceEntries = yield* WorkspaceEntries;
+    return yield* workspaceEntries.listDirectory(input);
+  });
+
 const appendSeparator = (input: string) =>
   input.endsWith("/") || input.endsWith("\\")
     ? input
@@ -278,6 +284,58 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         yield* searchWorkspaceEntries({ cwd, query: "", limit: 200 });
 
         expect(peakReads).toBeLessThanOrEqual(32);
+      }),
+    );
+  });
+
+  describe("listDirectory", () => {
+    it.effect("lists direct children with directories first", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-" });
+        yield* writeTextFile(cwd, "z-file.ts", "export {};");
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* writeTextFile(cwd, "docs/readme.md", "# Docs\n");
+
+        const result = yield* listWorkspaceDirectory({ cwd, limit: 10 });
+
+        expect(result).toEqual({
+          entries: [
+            { path: "docs", kind: "directory" },
+            { path: "src", kind: "directory" },
+            { path: "z-file.ts", kind: "file" },
+          ],
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("lists nested direct children and marks truncation", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-nested-" });
+        yield* writeTextFile(cwd, "src/b.ts", "export {};");
+        yield* writeTextFile(cwd, "src/a.ts", "export {};");
+        yield* writeTextFile(cwd, "src/nested/index.ts", "export {};");
+
+        const result = yield* listWorkspaceDirectory({ cwd, parentPath: "src", limit: 2 });
+
+        expect(result.entries).toEqual([
+          { path: "src/nested", kind: "directory", parentPath: "src" },
+          { path: "src/a.ts", kind: "file", parentPath: "src" },
+        ]);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("ignores generated directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-ignore-" });
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js", "module.exports = {};");
+        yield* writeTextFile(cwd, ".git/HEAD", "ref: refs/heads/main");
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+
+        const result = yield* listWorkspaceDirectory({ cwd });
+
+        expect(result.entries).toEqual([{ path: "src", kind: "directory" }]);
       }),
     );
   });

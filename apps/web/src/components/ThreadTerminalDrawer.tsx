@@ -20,7 +20,6 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
-import { openInPreferredEditor } from "../editorPreferences";
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
@@ -48,6 +47,7 @@ import {
 import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
+import { useOpenWorkspaceFile } from "../hooks/useOpenWorkspaceFile";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -293,6 +293,13 @@ export function TerminalViewport({
   const keybindingsRef = useRef(keybindings);
   const lastAppliedTerminalEventIdRef = useRef(0);
   const terminalHydratedRef = useRef(false);
+  const openWorkspaceFile = useOpenWorkspaceFile({
+    environmentId,
+    workspaceRoot: cwd,
+  });
+  const handleOpenWorkspaceFile = useEffectEvent((targetPath: string) => {
+    openWorkspaceFile(targetPath);
+  });
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -501,12 +508,7 @@ export function TerminalViewport({
               }
 
               const target = resolvePathLinkTarget(match.text, cwd);
-              void openInPreferredEditor(localApi, target).catch((error) => {
-                writeSystemMessage(
-                  latestTerminal,
-                  error instanceof Error ? error.message : "Unable to open path",
-                );
-              });
+              handleOpenWorkspaceFile(target);
             },
           })),
         );

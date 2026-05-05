@@ -407,6 +407,8 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                 <ChatMarkdown
                   text={messageText}
                   cwd={ctx.markdownCwd}
+                  environmentId={ctx.activeThreadEnvironmentId}
+                  workspaceRoot={ctx.workspaceRoot}
                   isStreaming={Boolean(row.message.streaming)}
                 />
                 <AssistantChangedFilesSection

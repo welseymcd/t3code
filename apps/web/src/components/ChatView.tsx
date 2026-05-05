@@ -182,6 +182,8 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { FileExplorerSidebar } from "./FileExplorerSidebar";
+import { FileViewerDialog } from "./FileViewerDialog";
 import { Button } from "./ui/button";
 import {
   buildVersionMismatchDismissalKey,
@@ -700,6 +702,7 @@ export default function ChatView(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  const [fileExplorerOpen, setFileExplorerOpen] = useState(false);
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -2146,6 +2149,12 @@ export default function ChatView(props: ChatViewProps) {
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  const toggleFileExplorer = useCallback(() => {
+    setFileExplorerOpen((open) => !open);
+  }, []);
+  const closeFileExplorer = useCallback(() => {
+    setFileExplorerOpen(false);
+  }, []);
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -2235,8 +2244,15 @@ export default function ChatView(props: ChatViewProps) {
       planSidebarOpenOnNextThreadRef.current = false;
       setPlanSidebarOpen(false);
     }
+    setFileExplorerOpen(false);
     planSidebarDismissedForTurnRef.current = null;
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (!activeWorkspaceRoot) {
+      setFileExplorerOpen(false);
+    }
+  }, [activeWorkspaceRoot]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -3526,6 +3542,8 @@ export default function ChatView(props: ChatViewProps) {
           availableEditors={availableEditors}
           terminalAvailable={activeProject !== undefined}
           terminalOpen={terminalState.terminalOpen}
+          fileExplorerAvailable={Boolean(activeWorkspaceRoot)}
+          fileExplorerOpen={fileExplorerOpen}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
@@ -3535,6 +3553,7 @@ export default function ChatView(props: ChatViewProps) {
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
+          onToggleFileExplorer={toggleFileExplorer}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -3734,6 +3753,14 @@ export default function ChatView(props: ChatViewProps) {
             onClose={closePlanSidebar}
           />
         ) : null}
+        {fileExplorerOpen && !shouldUsePlanSidebarSheet ? (
+          <FileExplorerSidebar
+            environmentId={activeThread.environmentId}
+            cwd={activeWorkspaceRoot ?? null}
+            mode="sidebar"
+            onClose={closeFileExplorer}
+          />
+        ) : null}
       </div>
       {/* end horizontal flex container */}
 
@@ -3769,10 +3796,21 @@ export default function ChatView(props: ChatViewProps) {
           />
         </RightPanelSheet>
       ) : null}
+      {shouldUsePlanSidebarSheet && fileExplorerOpen ? (
+        <RightPanelSheet open={fileExplorerOpen} onClose={closeFileExplorer}>
+          <FileExplorerSidebar
+            environmentId={activeThread.environmentId}
+            cwd={activeWorkspaceRoot ?? null}
+            mode="sheet"
+            onClose={closeFileExplorer}
+          />
+        </RightPanelSheet>
+      ) : null}
 
       {expandedImage && (
         <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />
       )}
+      <FileViewerDialog />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import React, {
   Children,
@@ -26,6 +27,7 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
+import { useOpenWorkspaceFile } from "../hooks/useOpenWorkspaceFile";
 import { resolveMarkdownFileLinkMeta, rewriteMarkdownFileUriHref } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
@@ -54,6 +56,8 @@ class CodeHighlightErrorBoundary extends React.Component<
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
+  environmentId?: EnvironmentId | undefined;
+  workspaceRoot?: string | undefined;
   isStreaming?: boolean;
 }
 
@@ -274,6 +278,7 @@ interface MarkdownFileLinkProps {
   filePath: string;
   label: string;
   theme: "light" | "dark";
+  onOpenFile: (targetPath: string) => void;
   className?: string | undefined;
 }
 
@@ -364,28 +369,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   filePath,
   label,
   theme,
+  onOpenFile,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpen = useCallback(() => {
-    const api = readLocalApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Open in editor is unavailable",
-      });
-      return;
-    }
-
-    void openInPreferredEditor(api, targetPath).catch((error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open file",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    });
-  }, [targetPath]);
+    onOpenFile(targetPath);
+  }, [onOpenFile, targetPath]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -498,12 +487,51 @@ function areMarkdownFileLinkPropsEqual(
     previous.filePath === next.filePath &&
     previous.label === next.label &&
     previous.theme === next.theme &&
+    previous.onOpenFile === next.onOpenFile &&
     previous.className === next.className
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({
+  text,
+  cwd,
+  environmentId,
+  workspaceRoot,
+  isStreaming = false,
+}: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
+  const openWorkspaceFile = useOpenWorkspaceFile({
+    environmentId: environmentId ?? ("" as EnvironmentId),
+    workspaceRoot,
+  });
+  const openFile = useCallback(
+    (targetPath: string) => {
+      if (environmentId && workspaceRoot) {
+        openWorkspaceFile(targetPath);
+        return;
+      }
+
+      const api = readLocalApi();
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Open in editor is unavailable",
+        });
+        return;
+      }
+
+      void openInPreferredEditor(api, targetPath).catch((error) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open file",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      });
+    },
+    [environmentId, openWorkspaceFile, workspaceRoot],
+  );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
@@ -555,6 +583,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
             filePath={fileLinkMeta.filePath}
             label={labelParts.join(" · ")}
             theme={resolvedTheme}
+            onOpenFile={openFile}
             className={props.className}
           />
         );
@@ -586,6 +615,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
+      openFile,
       resolvedTheme,
     ],
   );
