@@ -28,6 +28,7 @@ import {
 } from "../Services/SessionCredentialService.ts";
 import {
   issueRAuthClaimProof as signRAuthClaimProof,
+  type VerifiedRAuthGrant,
   verifyRAuthGrantCredential,
 } from "../Services/RAuthGrantVerification.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
@@ -40,6 +41,86 @@ type BootstrapExchangeResult = {
 
 const AUTHORIZATION_PREFIX = "Bearer ";
 const WEBSOCKET_TOKEN_QUERY_PARAM = "wsToken";
+
+async function verifyRAuthGrantCredentialRemotely(input: {
+  readonly credential: string;
+  readonly rAuthBaseUrl: string;
+  readonly expectedIssuer: string;
+  readonly expectedEnvironmentId: string;
+  readonly now: DateTime.Utc;
+}): Promise<VerifiedRAuthGrant> {
+  const verifyUrl = new URL("/rest/v1/t3/grants/verify", input.rAuthBaseUrl);
+  const response = await fetch(verifyUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ credential: input.credential }),
+  });
+  if (!response.ok) {
+    throw new AuthError({
+      message: await response.text().catch(() => "Invalid r-auth grant."),
+      status: 401,
+    });
+  }
+
+  const body = (await response.json()) as {
+    readonly grant?: {
+      readonly iss?: unknown;
+      readonly aud?: unknown;
+      readonly sub?: unknown;
+      readonly role?: unknown;
+      readonly iat?: unknown;
+      readonly exp?: unknown;
+    };
+  };
+  const grant = body.grant;
+  if (
+    !grant ||
+    typeof grant.iss !== "string" ||
+    typeof grant.aud !== "string" ||
+    typeof grant.sub !== "string" ||
+    (grant.role !== "owner" && grant.role !== "client") ||
+    typeof grant.iat !== "number" ||
+    typeof grant.exp !== "number"
+  ) {
+    throw new AuthError({
+      message: "Invalid r-auth grant.",
+      status: 401,
+    });
+  }
+
+  if (grant.iss !== input.expectedIssuer) {
+    throw new AuthError({
+      message: "Unexpected r-auth grant issuer.",
+      status: 401,
+    });
+  }
+
+  if (grant.aud !== input.expectedEnvironmentId) {
+    throw new AuthError({
+      message: "This grant is for a different environment.",
+      status: 401,
+    });
+  }
+
+  if (grant.exp <= Math.floor(input.now.epochMilliseconds / 1000)) {
+    throw new AuthError({
+      message: "r-auth grant expired.",
+      status: 401,
+    });
+  }
+
+  return {
+    subject: grant.sub,
+    role: grant.role,
+    issuer: grant.iss,
+    audience: grant.aud,
+    environmentId: grant.aud,
+    issuedAt: DateTime.makeUnsafe(grant.iat * 1000),
+    expiresAt: DateTime.makeUnsafe(grant.exp * 1000),
+  };
+}
 
 export function toBootstrapExchangeAuthError(cause: BootstrapCredentialError): AuthError {
   if (cause.status === 500) {
@@ -78,7 +159,9 @@ export const makeServerAuth = Effect.gen(function* () {
     typeof config.rAuthBaseUrl === "string" &&
     config.rAuthBaseUrl.trim().length > 0 &&
     typeof config.rAuthIssuer === "string" &&
-    config.rAuthIssuer.trim().length > 0 &&
+    config.rAuthIssuer.trim().length > 0;
+  const centralizedAuthSigningConfigured =
+    centralizedAuthConfigured &&
     typeof config.rAuthGrantSharedSecret === "string" &&
     config.rAuthGrantSharedSecret.trim().length > 0;
 
@@ -282,15 +365,33 @@ export const makeServerAuth = Effect.gen(function* () {
 
       const now = yield* DateTime.now;
       const expectedIssuer = config.rAuthIssuer ?? "";
-      const expectedSharedSecret = Buffer.from(config.rAuthGrantSharedSecret ?? "", "utf8");
+      const grant = yield* centralizedAuthSigningConfigured
+        ? verifyRAuthGrantCredential(credential, {
+            expectedIssuer,
+            expectedSharedSecret: Buffer.from(config.rAuthGrantSharedSecret ?? "", "utf8"),
+            expectedEnvironmentId,
+            now,
+          }).pipe(Effect.mapError(mapRAuthGrantError))
+        : Effect.tryPromise({
+            try: () =>
+              verifyRAuthGrantCredentialRemotely({
+                credential,
+                rAuthBaseUrl: config.rAuthBaseUrl ?? "",
+                expectedIssuer,
+                expectedEnvironmentId,
+                now,
+              }),
+            catch: (cause) =>
+              cause instanceof AuthError
+                ? cause
+                : new AuthError({
+                    message: "Invalid r-auth grant.",
+                    status: 401,
+                    cause,
+                  }),
+          });
 
-      return yield* verifyRAuthGrantCredential(credential, {
-        expectedIssuer,
-        expectedSharedSecret,
-        expectedEnvironmentId,
-        now,
-      }).pipe(
-        Effect.mapError(mapRAuthGrantError),
+      return yield* Effect.succeed(grant).pipe(
         Effect.flatMap((grant) =>
           issueGrantedSession("browser-session-cookie", grant, requestMetadata).pipe(
             Effect.mapError(mapGrantIssueError),
@@ -324,12 +425,31 @@ export const makeServerAuth = Effect.gen(function* () {
 
       return Effect.gen(function* () {
         const now = yield* DateTime.now;
-        const grant = yield* verifyRAuthGrantCredential(credential, {
-          expectedIssuer: config.rAuthIssuer ?? "",
-          expectedSharedSecret: Buffer.from(config.rAuthGrantSharedSecret ?? "", "utf8"),
-          expectedEnvironmentId,
-          now,
-        }).pipe(Effect.mapError(mapRAuthGrantError));
+        const grant = yield* centralizedAuthSigningConfigured
+          ? verifyRAuthGrantCredential(credential, {
+              expectedIssuer: config.rAuthIssuer ?? "",
+              expectedSharedSecret: Buffer.from(config.rAuthGrantSharedSecret ?? "", "utf8"),
+              expectedEnvironmentId,
+              now,
+            }).pipe(Effect.mapError(mapRAuthGrantError))
+          : Effect.tryPromise({
+              try: () =>
+                verifyRAuthGrantCredentialRemotely({
+                  credential,
+                  rAuthBaseUrl: config.rAuthBaseUrl ?? "",
+                  expectedIssuer: config.rAuthIssuer ?? "",
+                  expectedEnvironmentId,
+                  now,
+                }),
+              catch: (cause) =>
+                cause instanceof AuthError
+                  ? cause
+                  : new AuthError({
+                      message: "Invalid r-auth grant.",
+                      status: 401,
+                      cause,
+                    }),
+            });
 
         const session = yield* issueGrantedSession(
           "bearer-session-token",
@@ -352,6 +472,12 @@ export const makeServerAuth = Effect.gen(function* () {
       if (!centralizedAuthConfigured) {
         return yield* new AuthError({
           message: "Centralized auth is disabled on this server.",
+          status: 503,
+        });
+      }
+      if (!centralizedAuthSigningConfigured) {
+        return yield* new AuthError({
+          message: "Centralized auth registration is disabled on this server.",
           status: 503,
         });
       }

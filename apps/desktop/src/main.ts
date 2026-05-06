@@ -123,6 +123,8 @@ const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
 const CLIENT_SETTINGS_PATH = Path.join(STATE_DIR, "client-settings.json");
 const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments.json");
 const DESKTOP_SCHEME = "t3";
+const DESKTOP_DEEP_LINK_SCHEME = "t3code";
+const DEFAULT_R_AUTH_BASE_URL = "https://auth.rmcd.cc";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 // Dev-only SSH launcher override. Set this to an absolute path on the SSH host
@@ -322,6 +324,28 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.T3CODE_TAILSCALE_SERVE;
   delete env.T3CODE_TAILSCALE_SERVE_PORT;
   return env;
+}
+
+function isTruthyConfigValue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized !== "0" && normalized !== "false" && normalized !== "no";
+}
+
+function resolveDesktopRAuthBootstrapConfig() {
+  if (!isTruthyConfigValue(process.env.T3CODE_R_AUTH_ENABLED)) {
+    return { rAuthEnabled: false } as const;
+  }
+
+  const rAuthBaseUrl = process.env.T3CODE_R_AUTH_BASE_URL?.trim() || DEFAULT_R_AUTH_BASE_URL;
+  const rAuthIssuer = process.env.T3CODE_R_AUTH_ISSUER?.trim() || rAuthBaseUrl;
+  const rAuthGrantSharedSecret = process.env.T3CODE_R_AUTH_GRANT_SHARED_SECRET?.trim();
+
+  return {
+    rAuthEnabled: true,
+    rAuthBaseUrl,
+    rAuthIssuer,
+    ...(rAuthGrantSharedSecret ? { rAuthGrantSharedSecret } : {}),
+  } as const;
 }
 
 function getDesktopServerExposureState(): DesktopServerExposureState {
@@ -1155,9 +1179,9 @@ function configureAppIdentity(): void {
   if (isDevelopment) {
     const scriptPath = process.argv[1]?.trim();
     const protocolClientArgs = scriptPath ? [Path.resolve(scriptPath)] : [];
-    app.setAsDefaultProtocolClient(DESKTOP_SCHEME, process.execPath, protocolClientArgs);
+    app.setAsDefaultProtocolClient(DESKTOP_DEEP_LINK_SCHEME, process.execPath, protocolClientArgs);
   } else {
-    app.setAsDefaultProtocolClient(DESKTOP_SCHEME);
+    app.setAsDefaultProtocolClient(DESKTOP_DEEP_LINK_SCHEME);
   }
 
   if (process.platform === "darwin" && app.dock) {
@@ -1550,6 +1574,7 @@ function startBackend(): void {
         t3Home: BASE_DIR,
         host: backendBindHost,
         desktopBootstrapToken: backendBootstrapToken,
+        ...resolveDesktopRAuthBootstrapConfig(),
         tailscaleServeEnabled: desktopSettings.tailscaleServeEnabled,
         tailscaleServePort: desktopSettings.tailscaleServePort,
         ...(backendObservabilitySettings.otlpTracesUrl
