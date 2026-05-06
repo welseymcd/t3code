@@ -4,11 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCreateEnvironmentConnection = vi.fn();
 const mockCreateWsRpcClient = vi.fn();
+const mockBootstrapRemoteBearerSession = vi.fn();
 const mockFetchRemoteSessionState = vi.fn();
+const mockRequestRAuthGrant = vi.fn();
 const mockWaitForSavedEnvironmentRegistryHydration = vi.fn();
 const mockListSavedEnvironmentRecords = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockReadSavedEnvironmentBearerToken = vi.fn();
+const mockWriteSavedEnvironmentBearerToken = vi.fn();
+const mockRemoveSavedEnvironmentBearerToken = vi.fn();
+const mockPatchRuntime = vi.fn();
 const mockGetSavedEnvironmentRecord = vi.fn();
 
 function MockWsTransport() {
@@ -29,10 +34,15 @@ vi.mock("../primary", () => ({
 }));
 
 vi.mock("../remote/api", () => ({
-  bootstrapRemoteBearerSession: vi.fn(),
+  bootstrapRemoteBearerSession: mockBootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor: vi.fn(),
   fetchRemoteSessionState: mockFetchRemoteSessionState,
   resolveRemoteWebSocketConnectionUrl: vi.fn(() => "ws://remote.example.test"),
+}));
+
+vi.mock("../rAuth/api", () => ({
+  isRAuthHttpError: vi.fn(() => false),
+  requestRAuthGrant: mockRequestRAuthGrant,
 }));
 
 vi.mock("./catalog", () => ({
@@ -41,7 +51,7 @@ vi.mock("./catalog", () => ({
   listSavedEnvironmentRecords: mockListSavedEnvironmentRecords,
   persistSavedEnvironmentRecord: vi.fn(),
   readSavedEnvironmentBearerToken: mockReadSavedEnvironmentBearerToken,
-  removeSavedEnvironmentBearerToken: vi.fn(),
+  removeSavedEnvironmentBearerToken: mockRemoveSavedEnvironmentBearerToken,
   useSavedEnvironmentRegistryStore: {
     subscribe: mockSavedEnvironmentRegistrySubscribe,
     getState: () => ({
@@ -54,12 +64,12 @@ vi.mock("./catalog", () => ({
   useSavedEnvironmentRuntimeStore: {
     getState: () => ({
       ensure: vi.fn(),
-      patch: vi.fn(),
+      patch: mockPatchRuntime,
       clear: vi.fn(),
     }),
   },
   waitForSavedEnvironmentRegistryHydration: mockWaitForSavedEnvironmentRegistryHydration,
-  writeSavedEnvironmentBearerToken: vi.fn(),
+  writeSavedEnvironmentBearerToken: mockWriteSavedEnvironmentBearerToken,
 }));
 
 vi.mock("./connection", () => ({
@@ -228,6 +238,14 @@ describe("saved environment startup", () => {
       authenticated: true,
       role: "owner",
     });
+    mockBootstrapRemoteBearerSession.mockResolvedValue({
+      sessionToken: "saved-bearer-token",
+      role: "owner",
+    });
+    mockRequestRAuthGrant.mockResolvedValue({
+      credential: "r-auth-grant",
+      expiresAt: "2026-04-22T00:00:00.000Z",
+    });
     mockGetSavedEnvironmentRecord.mockImplementation((environmentId: EnvironmentId) =>
       environmentId === savedRecord.environmentId ? savedRecord : null,
     );
@@ -235,6 +253,7 @@ describe("saved environment startup", () => {
     mockSavedEnvironmentRegistrySubscribe.mockReturnValue(() => undefined);
     mockWaitForSavedEnvironmentRegistryHydration.mockResolvedValue(undefined);
     mockReadSavedEnvironmentBearerToken.mockResolvedValue("saved-bearer-token");
+    mockWriteSavedEnvironmentBearerToken.mockResolvedValue(true);
     mockCreateWsRpcClient.mockImplementation(() => createClient());
     mockCreateEnvironmentConnection.mockImplementation((input) => {
       if (input.kind === "saved") {
@@ -319,6 +338,84 @@ describe("saved environment startup", () => {
     );
     expect(savedConnectionCalls).toHaveLength(1);
     expect(mockFetchRemoteSessionState).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("refreshes a missing r-auth saved environment credential through centralized auth", async () => {
+    const rAuthRecord = {
+      ...savedRecord,
+      authSource: "r-auth" as const,
+    };
+    mockListSavedEnvironmentRecords.mockReturnValue([rAuthRecord]);
+    mockGetSavedEnvironmentRecord.mockImplementation((environmentId: EnvironmentId) =>
+      environmentId === rAuthRecord.environmentId ? rAuthRecord : null,
+    );
+    mockReadSavedEnvironmentBearerToken.mockResolvedValue(null);
+
+    const { startEnvironmentConnectionService, resetEnvironmentServiceForTests } =
+      await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    await vi.runAllTimersAsync();
+
+    expect(mockRequestRAuthGrant).toHaveBeenCalledWith({
+      environmentId: rAuthRecord.environmentId,
+    });
+    expect(mockBootstrapRemoteBearerSession).toHaveBeenCalledWith({
+      httpBaseUrl: rAuthRecord.httpBaseUrl,
+      credential: "r-auth-grant",
+    });
+    expect(mockCreateEnvironmentConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "saved",
+        knownEnvironment: expect.objectContaining({
+          environmentId: rAuthRecord.environmentId,
+        }),
+      }),
+    );
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("disconnects r-auth saved environments when centralized auth signs out", async () => {
+    const rAuthRecord = {
+      ...savedRecord,
+      authSource: "r-auth" as const,
+    };
+    mockListSavedEnvironmentRecords.mockReturnValue([rAuthRecord]);
+    mockGetSavedEnvironmentRecord.mockImplementation((environmentId: EnvironmentId) =>
+      environmentId === rAuthRecord.environmentId ? rAuthRecord : null,
+    );
+    mockReadSavedEnvironmentBearerToken.mockResolvedValue("saved-bearer-token");
+
+    const {
+      disconnectCentralizedAuthEnvironments,
+      listEnvironmentConnections,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    await vi.runAllTimersAsync();
+
+    await disconnectCentralizedAuthEnvironments();
+
+    expect(mockRemoveSavedEnvironmentBearerToken).toHaveBeenCalledWith(rAuthRecord.environmentId);
+    expect(mockPatchRuntime).toHaveBeenCalledWith(
+      rAuthRecord.environmentId,
+      expect.objectContaining({
+        authState: "requires-auth",
+        connectionState: "disconnected",
+      }),
+    );
+    expect(
+      listEnvironmentConnections().find(
+        (connection) => connection.environmentId === rAuthRecord.environmentId,
+      ),
+    ).toBeUndefined();
 
     stop();
     await resetEnvironmentServiceForTests();

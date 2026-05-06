@@ -8,6 +8,7 @@ import type {
   AuthPairingCredentialResult,
   AuthSessionId,
   AuthSessionState,
+  RAuthClaimProof,
   ServerAuthDescriptor,
   ServerAuthSessionMethod,
   AuthWebSocketTokenResult,
@@ -27,7 +28,7 @@ export interface AuthenticatedSession {
 
 export class AuthError extends Data.TaggedError("AuthError")<{
   readonly message: string;
-  readonly status?: 400 | 401 | 403 | 500;
+  readonly status?: 400 | 401 | 403 | 500 | 503;
   readonly cause?: unknown;
 }> {}
 
@@ -50,6 +51,28 @@ export interface ServerAuthShape {
     credential: string,
     requestMetadata: AuthClientMetadata,
   ) => Effect.Effect<AuthBearerBootstrapResult, AuthError>;
+  readonly exchangeRAuthGrantCredential: (
+    credential: string,
+    requestMetadata: AuthClientMetadata,
+    expectedEnvironmentId: string,
+  ) => Effect.Effect<
+    {
+      readonly response: AuthBootstrapResult;
+      readonly sessionToken: string;
+    },
+    AuthError
+  >;
+  readonly exchangeRAuthGrantCredentialForBearerSession: (
+    credential: string,
+    requestMetadata: AuthClientMetadata,
+    expectedEnvironmentId: string,
+  ) => Effect.Effect<AuthBearerBootstrapResult, AuthError>;
+  readonly issueRAuthClaimProof: (input: {
+    readonly environmentId: string;
+    readonly label: string;
+    readonly httpBaseUrl: string;
+    readonly wsBaseUrl: string;
+  }) => Effect.Effect<RAuthClaimProof, AuthError>;
   readonly issuePairingCredential: (
     input?: AuthCreatePairingCredentialInput & {
       readonly role?: SessionRole;

@@ -39,6 +39,11 @@ interface DesktopBuildIconAssets {
   readonly windowsIconIco: string;
 }
 
+interface DesktopProtocolConfig {
+  readonly name: string;
+  readonly schemes: ReadonlyArray<string>;
+}
+
 interface PlatformConfig {
   readonly cliFlag: "--mac" | "--linux" | "--win";
   readonly defaultTarget: string;
@@ -558,6 +563,15 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+export function resolveDesktopProtocolConfig(): ReadonlyArray<DesktopProtocolConfig> {
+  return [
+    {
+      name: "t3code",
+      schemes: ["t3"],
+    },
+  ];
+}
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -573,6 +587,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
+    protocols: resolveDesktopProtocolConfig(),
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = resolveGitHubPublishConfig(updateChannel);

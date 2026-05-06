@@ -183,6 +183,7 @@ export interface PersistedSavedEnvironmentRecord {
   httpBaseUrl: string;
   createdAt: string;
   lastConnectedAt: string | null;
+  authSource?: "manual-pairing" | "r-auth" | "desktop-ssh";
   desktopSsh?: DesktopSshEnvironmentTarget;
 }
 

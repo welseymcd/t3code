@@ -113,6 +113,10 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import {
+  issueRAuthGrantCredential,
+  verifyRAuthGrantCredential,
+} from "./auth/Services/RAuthGrantVerification.ts";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -208,7 +212,16 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 );
 
 const makeAuthTestLayer = () =>
-  ServerAuthLive.pipe(Layer.provide(SqlitePersistenceMemory), Layer.provide(ServerSecretStoreLive));
+  ServerAuthLive.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(ServerSecretStoreLive),
+    Layer.provide(
+      Layer.mock(ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
+        getDescriptor: Effect.succeed(testEnvironmentDescriptor),
+      }),
+    ),
+  );
 
 const makeBrowserOtlpPayload = (spanName: string) =>
   Effect.gen(function* () {
@@ -1034,6 +1047,217 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(sessionBody.authenticated, true);
         assert.equal(sessionBody.sessionMethod, "bearer-session-token");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("exchanges a centralized r-auth grant into a browser session", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          rAuthEnabled: true,
+          rAuthBaseUrl: "https://auth.example.com",
+          rAuthIssuer: "https://auth.example.com",
+          rAuthGrantSharedSecret: "test-r-auth-grant-secret",
+        },
+      });
+
+      const environmentUrl = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const environmentResponse = yield* Effect.promise(() => fetch(environmentUrl));
+      const environment = (yield* Effect.promise(() => environmentResponse.json())) as {
+        readonly environmentId: string;
+      };
+
+      const credential = issueRAuthGrantCredential({
+        issuer: "https://auth.example.com",
+        audience: environment.environmentId,
+        subject: "user-123",
+        role: "client",
+        issuedAt: DateTime.makeUnsafe("2026-05-06T00:00:00.000Z"),
+        expiresAt: DateTime.makeUnsafe("2026-05-07T00:00:00.000Z"),
+        secret: new TextEncoder().encode("test-r-auth-grant-secret"),
+      });
+
+      const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap/r-auth");
+      const response = yield* Effect.promise(() =>
+        fetch(bootstrapUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ credential }),
+        }),
+      );
+      const responseText = yield* Effect.promise(() => response.text());
+      const body = JSON.parse(responseText) as {
+        readonly authenticated: boolean;
+        readonly sessionMethod: string;
+        readonly role: string;
+      };
+      const cookie = response.headers.get("set-cookie");
+
+      if (response.status !== 200) {
+        console.log(responseText);
+      }
+      assert.equal(response.status, 200);
+      assert.equal(body.authenticated, true);
+      assert.equal(body.sessionMethod, "browser-session-cookie");
+      assert.equal(body.role, "client");
+      assert.isDefined(cookie);
+
+      const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+      const sessionResponse = yield* Effect.promise(() =>
+        fetch(sessionUrl, {
+          headers: {
+            cookie: cookie?.split(";")[0] ?? "",
+          },
+        }),
+      );
+      const sessionBody = (yield* Effect.promise(() => sessionResponse.json())) as {
+        readonly authenticated: boolean;
+        readonly sessionMethod?: string;
+      };
+
+      assert.equal(sessionResponse.status, 200);
+      assert.equal(sessionBody.authenticated, true);
+      assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("exchanges a centralized r-auth grant into a bearer session", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          rAuthEnabled: true,
+          rAuthBaseUrl: "https://auth.example.com",
+          rAuthIssuer: "https://auth.example.com",
+          rAuthGrantSharedSecret: "test-r-auth-grant-secret",
+        },
+      });
+
+      const environmentUrl = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const environmentResponse = yield* Effect.promise(() => fetch(environmentUrl));
+      const environment = (yield* Effect.promise(() => environmentResponse.json())) as {
+        readonly environmentId: string;
+      };
+
+      const credential = issueRAuthGrantCredential({
+        issuer: "https://auth.example.com",
+        audience: environment.environmentId,
+        subject: "user-456",
+        role: "owner",
+        issuedAt: DateTime.makeUnsafe("2026-05-06T00:00:00.000Z"),
+        expiresAt: DateTime.makeUnsafe("2026-05-07T00:00:00.000Z"),
+        secret: new TextEncoder().encode("test-r-auth-grant-secret"),
+      });
+
+      const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap/r-auth/bearer");
+      const response = yield* Effect.promise(() =>
+        fetch(bootstrapUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ credential }),
+        }),
+      );
+      const responseText = yield* Effect.promise(() => response.text());
+      const body = JSON.parse(responseText) as {
+        readonly authenticated: boolean;
+        readonly sessionMethod: string;
+        readonly role: string;
+        readonly sessionToken: string;
+      };
+
+      if (response.status !== 200) {
+        console.log(responseText);
+      }
+      assert.equal(response.status, 200);
+      assert.equal(body.authenticated, true);
+      assert.equal(body.sessionMethod, "bearer-session-token");
+      assert.equal(body.role, "owner");
+      assert.isTrue(body.sessionToken.length > 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("issues an r-auth claim proof for the current owner environment", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          rAuthEnabled: true,
+          rAuthBaseUrl: "https://auth.example.com",
+          rAuthIssuer: "https://auth.example.com",
+          rAuthGrantSharedSecret: "test-r-auth-grant-secret",
+        },
+      });
+
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const claimProofUrl = yield* getHttpServerUrl("/api/auth/r-auth/claim-proof");
+      const response = yield* Effect.promise(() =>
+        fetch(claimProofUrl, {
+          headers: {
+            cookie,
+          },
+        }),
+      );
+      const body = (yield* Effect.promise(() => response.json())) as {
+        readonly environmentId: string;
+        readonly audience: string;
+        readonly proof: string;
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(body.audience, "https://auth.example.com");
+      assert.isTrue(body.environmentId.length > 0);
+      assert.isTrue(body.proof.length > 10);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("issues an r-auth grant for the authenticated session", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          rAuthEnabled: true,
+          rAuthBaseUrl: "https://auth.example.com",
+          rAuthIssuer: "https://auth.example.com",
+          rAuthGrantSharedSecret: "test-r-auth-grant-secret",
+        },
+      });
+
+      const environmentUrl = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const environmentResponse = yield* Effect.promise(() => fetch(environmentUrl));
+      const environment = (yield* Effect.promise(() => environmentResponse.json())) as {
+        readonly environmentId: string;
+      };
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+
+      const grantUrl = yield* getHttpServerUrl("/api/auth/r-auth/grants");
+      const response = yield* Effect.promise(() =>
+        fetch(grantUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            cookie,
+          },
+          body: JSON.stringify({ environmentId: environment.environmentId }),
+        }),
+      );
+      const body = (yield* Effect.promise(() => response.json())) as {
+        readonly credential: string;
+        readonly expiresAt: string;
+      };
+
+      assert.equal(response.status, 200);
+      assert.isTrue(body.credential.length > 10);
+      assert.isTrue(body.expiresAt.length > 0);
+
+      const verified = yield* verifyRAuthGrantCredential(body.credential, {
+        expectedIssuer: "https://auth.example.com",
+        expectedSharedSecret: new TextEncoder().encode("test-r-auth-grant-secret"),
+        expectedEnvironmentId: environment.environmentId,
+        now: DateTime.makeUnsafe(Date.parse(body.expiresAt) - 1_000),
+      });
+      assert.equal(verified.environmentId, environment.environmentId);
+      assert.equal(verified.issuer, "https://auth.example.com");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("issues short-lived websocket tokens for authenticated bearer sessions", () =>

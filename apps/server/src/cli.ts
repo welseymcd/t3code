@@ -76,6 +76,10 @@ const BootstrapEnvelopeSchema = Schema.Struct({
   devUrl: Schema.optional(Schema.URLFromString),
   noBrowser: Schema.optional(Schema.Boolean),
   desktopBootstrapToken: Schema.optional(Schema.String),
+  rAuthEnabled: Schema.optional(Schema.Boolean),
+  rAuthBaseUrl: Schema.optional(Schema.String),
+  rAuthIssuer: Schema.optional(Schema.String),
+  rAuthGrantSharedSecret: Schema.optional(Schema.String),
   autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
   logWebSocketEvents: Schema.optional(Schema.Boolean),
   tailscaleServeEnabled: Schema.optional(Schema.Boolean),
@@ -179,6 +183,22 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  rAuthEnabled: Config.boolean("T3CODE_R_AUTH_ENABLED").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  rAuthBaseUrl: Config.string("T3CODE_R_AUTH_BASE_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  rAuthIssuer: Config.string("T3CODE_R_AUTH_ISSUER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  rAuthGrantSharedSecret: Config.string("T3CODE_R_AUTH_GRANT_SHARED_SECRET").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   autoBootstrapProjectFromCwd: Config.boolean("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -206,6 +226,10 @@ interface CliServerFlags {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly bootstrapFd: Option.Option<number>;
+  readonly rAuthEnabled?: Option.Option<boolean>;
+  readonly rAuthBaseUrl?: Option.Option<string>;
+  readonly rAuthIssuer?: Option.Option<string>;
+  readonly rAuthGrantSharedSecret?: Option.Option<string>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
@@ -254,6 +278,10 @@ export const resolveServerConfig = (
       devUrl: flags.devUrl ?? Option.none(),
       noBrowser: flags.noBrowser ?? Option.none(),
       bootstrapFd: flags.bootstrapFd ?? Option.none(),
+      rAuthEnabled: flags.rAuthEnabled ?? Option.none(),
+      rAuthBaseUrl: flags.rAuthBaseUrl ?? Option.none(),
+      rAuthIssuer: flags.rAuthIssuer ?? Option.none(),
+      rAuthGrantSharedSecret: flags.rAuthGrantSharedSecret ?? Option.none(),
       autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
@@ -330,6 +358,34 @@ export const resolveServerConfig = (
       () => mode === "desktop",
     );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
+    const rAuthEnabled = Option.getOrElse(
+      resolveOptionPrecedence(
+        Option.fromUndefinedOr(env.rAuthEnabled),
+        Option.fromUndefinedOr(bootstrap?.rAuthEnabled),
+      ),
+      () => false,
+    );
+    const rAuthBaseUrl = Option.getOrElse(
+      resolveOptionPrecedence(
+        Option.fromUndefinedOr(env.rAuthBaseUrl),
+        Option.fromUndefinedOr(bootstrap?.rAuthBaseUrl),
+      ),
+      () => undefined,
+    );
+    const rAuthIssuer = Option.getOrElse(
+      resolveOptionPrecedence(
+        Option.fromUndefinedOr(env.rAuthIssuer),
+        Option.fromUndefinedOr(bootstrap?.rAuthIssuer),
+      ),
+      () => undefined,
+    );
+    const rAuthGrantSharedSecret = Option.getOrElse(
+      resolveOptionPrecedence(
+        Option.fromUndefinedOr(env.rAuthGrantSharedSecret),
+        Option.fromUndefinedOr(bootstrap?.rAuthGrantSharedSecret),
+      ),
+      () => undefined,
+    );
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
         Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
@@ -404,6 +460,10 @@ export const resolveServerConfig = (
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,
+      rAuthEnabled,
+      rAuthBaseUrl,
+      rAuthIssuer,
+      rAuthGrantSharedSecret,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,

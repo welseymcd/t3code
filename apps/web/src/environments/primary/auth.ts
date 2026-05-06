@@ -8,6 +8,7 @@ import type {
   AuthRevokePairingLinkInput,
   AuthSessionId,
   AuthSessionState,
+  RAuthClaimProof,
 } from "@t3tools/contracts";
 
 import {
@@ -168,6 +169,30 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBoot
   });
 }
 
+async function exchangeRAuthGrantCredential(credential: string): Promise<AuthBootstrapResult> {
+  return retryTransientBootstrap(async () => {
+    const payload: AuthBootstrapInput = { credential };
+    const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/bootstrap/r-auth"), {
+      body: JSON.stringify(payload),
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      const message = toFriendlyBootstrapErrorMessage(response.status, await response.text());
+      throw new BootstrapHttpError({
+        message: message || `Failed to bootstrap r-auth session (${response.status}).`,
+        status: response.status,
+      });
+    }
+
+    return (await response.json()) as AuthBootstrapResult;
+  });
+}
+
 async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionState> {
   const startedAt = Date.now();
 
@@ -263,6 +288,32 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
   await exchangeBootstrapCredential(trimmedCredential);
   bootstrapPromise = null;
   stripPairingTokenFromUrl();
+}
+
+export async function submitServerRAuthCredential(credential: string): Promise<void> {
+  const trimmedCredential = credential.trim();
+  if (!trimmedCredential) {
+    throw new Error("Enter a grant to continue.");
+  }
+
+  resolvedAuthenticatedGateState = null;
+  await exchangeRAuthGrantCredential(trimmedCredential);
+  await waitForAuthenticatedSessionAfterBootstrap();
+  bootstrapPromise = null;
+}
+
+export async function fetchServerRAuthClaimProof(): Promise<RAuthClaimProof> {
+  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/r-auth/claim-proof"), {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(response, `Failed to load r-auth claim proof (${response.status}).`),
+    );
+  }
+
+  return (await response.json()) as RAuthClaimProof;
 }
 
 export async function createServerPairingCredential(

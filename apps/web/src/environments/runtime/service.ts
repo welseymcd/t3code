@@ -39,6 +39,7 @@ import {
   resolveRemoteWebSocketConnectionUrl,
 } from "../remote/api";
 import { resolveRemotePairingTarget } from "../remote/target";
+import { isRAuthHttpError, requestRAuthGrant } from "../rAuth/api";
 import {
   getSavedEnvironmentRecord,
   hasSavedEnvironmentRegistryHydrated,
@@ -103,6 +104,15 @@ function isSavedEnvironmentConnectionCancelledError(
   error: unknown,
 ): error is SavedEnvironmentConnectionCancelledError {
   return error instanceof SavedEnvironmentConnectionCancelledError;
+}
+
+const CENTRALIZED_AUTH_RECOVERY_ERROR_MESSAGES = new Set([
+  "Sign in to r-auth again to reconnect this environment.",
+  "Saved environment no longer accepts this r-auth grant.",
+]);
+
+function isCentralizedAuthRecoveryError(error: unknown): boolean {
+  return error instanceof Error && CENTRALIZED_AUTH_RECOVERY_ERROR_MESSAGES.has(error.message);
 }
 
 interface PendingSavedEnvironmentConnection {
@@ -824,6 +834,86 @@ async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Pro
   };
 }
 
+async function issueRAuthBearerSession(record: SavedEnvironmentRecord): Promise<{
+  readonly record: SavedEnvironmentRecord;
+  readonly bearerToken: string;
+  readonly role: AuthSessionRole | null;
+}> {
+  const grantCredential = await (async () => {
+    try {
+      const grant = await requestRAuthGrant({
+        environmentId: record.environmentId,
+      });
+      return grant.credential;
+    } catch (error) {
+      if (isRAuthHttpError(error) && error.status === 401) {
+        useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+          authState: "requires-auth",
+          role: null,
+          connectionState: "disconnected",
+          lastError: "Sign in to r-auth again to reconnect this environment.",
+          lastErrorAt: isoNow(),
+        });
+        throw new Error("Sign in to r-auth again to reconnect this environment.", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  })();
+
+  let bearerSession;
+  try {
+    bearerSession = await bootstrapRemoteBearerSession({
+      httpBaseUrl: record.httpBaseUrl,
+      credential: grantCredential,
+    });
+  } catch (error) {
+    if (isRemoteEnvironmentAuthHttpError(error) && error.status === 401) {
+      useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+        authState: "requires-auth",
+        role: null,
+        connectionState: "disconnected",
+        lastError: "Saved environment no longer accepts this r-auth grant.",
+        lastErrorAt: isoNow(),
+      });
+      throw new Error("Saved environment no longer accepts this r-auth grant.", {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+  const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
+    record.environmentId,
+    bearerSession.sessionToken,
+  );
+  if (!didPersistBearerToken) {
+    throw new Error("Unable to persist saved environment credentials.");
+  }
+
+  return {
+    record,
+    bearerToken: bearerSession.sessionToken,
+    role: bearerSession.role ?? null,
+  };
+}
+
+async function issueSavedEnvironmentBearerSession(record: SavedEnvironmentRecord): Promise<{
+  readonly record: SavedEnvironmentRecord;
+  readonly bearerToken: string;
+  readonly role: AuthSessionRole | null;
+}> {
+  if (record.desktopSsh) {
+    return await issueDesktopSshBearerSession(record);
+  }
+
+  if (record.authSource === "r-auth") {
+    return await issueRAuthBearerSession(record);
+  }
+
+  throw new Error("Saved environment is missing its saved credential.");
+}
+
 function setRuntimeConnecting(environmentId: EnvironmentId) {
   useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
     connectionState: "connecting",
@@ -1320,8 +1410,8 @@ async function ensureSavedEnvironmentConnection(
       let bearerToken =
         options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
       if (!bearerToken) {
-        if (record.desktopSsh) {
-          const issued = await issueDesktopSshBearerSession(record);
+        if (record.desktopSsh || record.authSource === "r-auth") {
+          const issued = await issueSavedEnvironmentBearerSession(record);
           activeRecord = issued.record;
           bearerToken = issued.bearerToken;
           roleHint = issued.role;
@@ -1405,14 +1495,14 @@ async function ensureSavedEnvironmentConnection(
           if (!isAuthError) {
             throw error;
           }
-          if (!activeRecord.desktopSsh) {
+          if (!activeRecord.desktopSsh && activeRecord.authSource !== "r-auth") {
             await removeSavedEnvironmentBearerToken(activeRecord.environmentId);
             throw new Error("Saved environment credential expired. Pair it again.", {
               cause: error,
             });
           }
 
-          const issued = await issueDesktopSshBearerSession(activeRecord);
+          const issued = await issueSavedEnvironmentBearerSession(activeRecord);
           activeRecord = issued.record;
           bearerToken = issued.bearerToken;
           roleHint = issued.role;
@@ -1435,6 +1525,9 @@ async function ensureSavedEnvironmentConnection(
         return connection;
       } catch (error) {
         if (error instanceof SavedEnvironmentConnectionCancelledError) {
+          throw error;
+        }
+        if (isCentralizedAuthRecoveryError(error)) {
           throw error;
         }
         setRuntimeError(activeRecord.environmentId, error);
@@ -1575,6 +1668,32 @@ export async function disconnectSavedEnvironment(environmentId: EnvironmentId): 
   }
 }
 
+export async function disconnectCentralizedAuthEnvironments(): Promise<void> {
+  const centralizedEnvironmentIds = listSavedEnvironmentRecords()
+    .filter((record) => record.authSource === "r-auth")
+    .map((record) => record.environmentId);
+
+  await Promise.all(
+    centralizedEnvironmentIds.map(async (environmentId) => {
+      const pendingConnection = pendingSavedEnvironmentConnections.get(environmentId);
+      if (pendingConnection) {
+        pendingConnection.cancelled = true;
+        pendingSavedEnvironmentConnections.delete(environmentId);
+      }
+
+      await removeConnection(environmentId).catch(() => false);
+      await removeSavedEnvironmentBearerToken(environmentId);
+      useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
+        authState: "requires-auth",
+        role: null,
+        connectionState: "disconnected",
+        lastError: null,
+        lastErrorAt: null,
+      });
+    }),
+  );
+}
+
 export async function reconnectSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
   const record = getSavedEnvironmentRecord(environmentId);
   if (!record) {
@@ -1603,9 +1722,9 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
     }
     await connection.reconnect();
   } catch (error) {
-    if (record.desktopSsh) {
+    if (record.desktopSsh || record.authSource === "r-auth") {
       try {
-        const issued = await issueDesktopSshBearerSession(
+        const issued = await issueSavedEnvironmentBearerSession(
           getSavedEnvironmentRecord(environmentId) ?? record,
         );
         await removeConnection(environmentId).catch(() => false);
@@ -1617,6 +1736,9 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
       } catch (recoveryError) {
         if (isSavedEnvironmentConnectionCancelledError(recoveryError)) {
           return;
+        }
+        if (isCentralizedAuthRecoveryError(recoveryError)) {
+          throw recoveryError;
         }
         setRuntimeError(environmentId, recoveryError);
         throw recoveryError;
@@ -1641,6 +1763,7 @@ export async function addSavedEnvironment(input: {
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
+  readonly authSource?: SavedEnvironmentRecord["authSource"];
   readonly desktopSsh?: DesktopSshEnvironmentTarget;
 }): Promise<SavedEnvironmentRecord> {
   const resolvedTarget = resolveRemotePairingTarget({
@@ -1675,6 +1798,9 @@ export async function addSavedEnvironment(input: {
     httpBaseUrl: resolvedTarget.httpBaseUrl,
     createdAt: existingRecord?.createdAt ?? isoNow(),
     lastConnectedAt: isoNow(),
+    authSource: input.desktopSsh
+      ? "desktop-ssh"
+      : (input.authSource ?? existingRecord?.authSource ?? "manual-pairing"),
     ...((input.desktopSsh ?? existingRecord?.desktopSsh)
       ? { desktopSsh: input.desktopSsh ?? existingRecord?.desktopSsh }
       : {}),
@@ -1716,6 +1842,7 @@ export async function connectDesktopSshEnvironment(
     label: options?.label?.trim() || bootstrap.target.alias,
     host: bootstrap.httpBaseUrl,
     pairingCode: bootstrap.pairingToken,
+    authSource: "desktop-ssh",
     desktopSsh: bootstrap.target,
   }).catch((error) => {
     const detail = [

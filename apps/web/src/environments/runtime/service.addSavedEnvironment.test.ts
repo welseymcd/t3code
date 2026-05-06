@@ -7,6 +7,7 @@ const mockResolveRemotePairingTarget = vi.fn();
 const mockFetchRemoteEnvironmentDescriptor = vi.fn();
 const mockBootstrapRemoteBearerSession = vi.fn();
 const mockFetchRemoteSessionState = vi.fn();
+const mockRequestRAuthGrant = vi.fn();
 const mockIsRemoteEnvironmentAuthHttpError = vi.fn((_: unknown) => false);
 const mockResolveRemoteWebSocketConnectionUrl = vi.fn();
 const mockBootstrapSshBearerSession = vi.fn();
@@ -66,6 +67,11 @@ vi.mock("../remote/api", () => ({
   fetchRemoteSessionState: mockFetchRemoteSessionState,
   isRemoteEnvironmentAuthHttpError: mockIsRemoteEnvironmentAuthHttpError,
   resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
+}));
+
+vi.mock("../rAuth/api", () => ({
+  isRAuthHttpError: vi.fn(() => false),
+  requestRAuthGrant: mockRequestRAuthGrant,
 }));
 
 vi.mock("~/localApi", () => ({
@@ -169,6 +175,10 @@ describe("addSavedEnvironment", () => {
     mockFetchRemoteSessionState.mockResolvedValue({
       authenticated: true,
       role: "owner",
+    });
+    mockRequestRAuthGrant.mockResolvedValue({
+      credential: "r-auth-grant",
+      expiresAt: "2026-04-22T00:00:00.000Z",
     });
     mockIsRemoteEnvironmentAuthHttpError.mockReturnValue(false);
     mockResolveRemoteWebSocketConnectionUrl.mockResolvedValue(
@@ -306,6 +316,26 @@ describe("addSavedEnvironment", () => {
         label: "Julius's Mac mini",
       }),
     ]);
+
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("marks manually paired saved environments with a manual auth source", async () => {
+    mockWriteSavedEnvironmentBearerToken.mockResolvedValue(true);
+
+    const { addSavedEnvironment, resetEnvironmentServiceForTests } = await import("./service");
+
+    await addSavedEnvironment({
+      label: "Remote environment",
+      host: "remote.example.com",
+      pairingCode: "123456",
+    });
+
+    expect(mockPersistSavedEnvironmentRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authSource: "manual-pairing",
+      }),
+    );
 
     await resetEnvironmentServiceForTests();
   });
@@ -592,6 +622,11 @@ describe("addSavedEnvironment", () => {
     expect(mockBootstrapSshBearerSession).toHaveBeenCalledWith(
       "http://127.0.0.1:3774/",
       "ssh-pairing-code",
+    );
+    expect(mockPersistSavedEnvironmentRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authSource: "desktop-ssh",
+      }),
     );
     expect(mockFetchRemoteEnvironmentDescriptor).not.toHaveBeenCalled();
     expect(mockBootstrapRemoteBearerSession).not.toHaveBeenCalled();

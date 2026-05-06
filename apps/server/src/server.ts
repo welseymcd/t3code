@@ -63,6 +63,10 @@ import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts
 import {
   authBearerBootstrapRouteLayer,
   authBootstrapRouteLayer,
+  authRAuthBearerBootstrapRouteLayer,
+  authRAuthBootstrapRouteLayer,
+  authRAuthClaimProofRouteLayer,
+  authRAuthGrantRouteLayer,
   authClientsRevokeOthersRouteLayer,
   authClientsRevokeRouteLayer,
   authClientsRouteLayer,
@@ -289,6 +293,10 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
 export const makeRoutesLayer = Layer.mergeAll(
   authBearerBootstrapRouteLayer,
   authBootstrapRouteLayer,
+  authRAuthBearerBootstrapRouteLayer,
+  authRAuthBootstrapRouteLayer,
+  authRAuthClaimProofRouteLayer,
+  authRAuthGrantRouteLayer,
   authClientsRevokeOthersRouteLayer,
   authClientsRevokeRouteLayer,
   authClientsRouteLayer,

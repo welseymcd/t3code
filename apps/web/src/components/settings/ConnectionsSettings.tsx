@@ -23,6 +23,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import { CentralizedAuthSection } from "./CentralizedAuthSection";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -2483,6 +2484,7 @@ export function ConnectionsSettings() {
               {renderAuthorizedClients("current")}
             </SettingsSection>
           ) : null}
+          <CentralizedAuthSection />
           <AlertDialog
             open={isDesktopServerExposureDialogOpen}
             onOpenChange={(open) => {

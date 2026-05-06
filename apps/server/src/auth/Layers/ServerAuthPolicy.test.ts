@@ -111,4 +111,24 @@ it.layer(NodeServices.layer)("ServerAuthPolicyLive", (it) => {
       ),
     ),
   );
+
+  it.effect("advertises r-auth grants when centralized auth is configured", () =>
+    Effect.gen(function* () {
+      const policy = yield* ServerAuthPolicy;
+      const descriptor = yield* policy.getDescriptor();
+
+      expect(descriptor.bootstrapMethods).toContain("r-auth-grant");
+    }).pipe(
+      Effect.provide(
+        makeServerAuthPolicyLayer({
+          mode: "web",
+          host: "127.0.0.1",
+          rAuthEnabled: true,
+          rAuthBaseUrl: "https://auth.example.com",
+          rAuthIssuer: "https://auth.example.com",
+          rAuthGrantSharedSecret: "test-r-auth-grant-secret",
+        }),
+      ),
+    ),
+  );
 });

@@ -18,6 +18,7 @@ export interface SavedEnvironmentRecord {
   readonly httpBaseUrl: string;
   readonly createdAt: string;
   readonly lastConnectedAt: string | null;
+  readonly authSource?: PersistedSavedEnvironmentRecord["authSource"];
   readonly desktopSsh?: PersistedSavedEnvironmentRecord["desktopSsh"];
 }
 
@@ -46,6 +47,7 @@ export function toPersistedSavedEnvironmentRecord(
     wsBaseUrl: record.wsBaseUrl,
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
+    ...(record.authSource ? { authSource: record.authSource } : {}),
     ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
   };
 }
