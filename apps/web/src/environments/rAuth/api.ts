@@ -27,9 +27,6 @@ export interface RAuthSessionState {
   readonly expiresAt: string | null;
 }
 
-const R_AUTH_CALLBACK_ROUTE_PATHNAME = "/auth/r-auth/callback";
-const R_AUTH_SETTINGS_ROUTE_HASH = "/settings/connections";
-
 class RAuthHttpError extends Error {
   readonly status: number;
 
@@ -71,8 +68,8 @@ export function resolveRAuthLoginUrl(
     hasEnvironmentId ? "/dashboard/t3/authorize" : "/api/t3/auth",
     resolveRAuthBaseUrl(baseUrl),
   );
-  const callbackUrl = new URL("t3code://auth/r-auth/callback");
-  callbackUrl.searchParams.set("redirectTo", resolveRAuthReturnToUrl(returnToUrl));
+  const callbackUrl = new URL("t3://auth/r-auth/callback");
+  callbackUrl.searchParams.set("redirectTo", returnToUrl);
   if (hasEnvironmentId) {
     callbackUrl.searchParams.set("environmentId", options.environmentId!.trim());
   }
@@ -81,20 +78,6 @@ export function resolveRAuthLoginUrl(
   }
   url.searchParams.set("redirectTo", callbackUrl.toString());
   return url.toString();
-}
-
-export function resolveRAuthReturnToUrl(
-  returnToUrl: string,
-  fallbackOrigin = window.location.origin,
-): string {
-  try {
-    return unwrapRAuthCallbackReturnUrl(
-      new URL(returnToUrl, fallbackOrigin),
-      fallbackOrigin,
-    ).toString();
-  } catch {
-    return new URL("/", fallbackOrigin).toString();
-  }
 }
 
 export function openRAuthSignInWindow(
@@ -106,59 +89,6 @@ export function openRAuthSignInWindow(
     "r-auth-sign-in",
     "popup,width=720,height=840",
   );
-}
-
-function unwrapRAuthCallbackReturnUrl(url: URL, fallbackOrigin: string, depth = 0): URL {
-  if (!isRAuthCallbackRouteUrl(url)) {
-    return url;
-  }
-
-  if (depth >= 3) {
-    return resolveRAuthSettingsUrl(fallbackOrigin);
-  }
-
-  const nestedRedirectTo = getRAuthCallbackSearchParams(url).get("redirectTo");
-  if (nestedRedirectTo && nestedRedirectTo.trim().length > 0) {
-    try {
-      return unwrapRAuthCallbackReturnUrl(new URL(nestedRedirectTo), fallbackOrigin, depth + 1);
-    } catch {
-      // Fall back below.
-    }
-  }
-
-  return resolveRAuthSettingsUrl(fallbackOrigin);
-}
-
-function isRAuthCallbackRouteUrl(url: URL): boolean {
-  if (url.pathname === R_AUTH_CALLBACK_ROUTE_PATHNAME) {
-    return true;
-  }
-
-  const hashRoute = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
-  return (
-    hashRoute === R_AUTH_CALLBACK_ROUTE_PATHNAME ||
-    hashRoute.startsWith(`${R_AUTH_CALLBACK_ROUTE_PATHNAME}?`)
-  );
-}
-
-function getRAuthCallbackSearchParams(url: URL): URLSearchParams {
-  if (url.pathname === R_AUTH_CALLBACK_ROUTE_PATHNAME) {
-    return url.searchParams;
-  }
-
-  const hashRoute = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
-  const queryStartIndex = hashRoute.indexOf("?");
-  if (queryStartIndex === -1) {
-    return new URLSearchParams();
-  }
-
-  return new URLSearchParams(hashRoute.slice(queryStartIndex));
-}
-
-function resolveRAuthSettingsUrl(fallbackOrigin: string): URL {
-  const url = new URL("/", fallbackOrigin);
-  url.hash = R_AUTH_SETTINGS_ROUTE_HASH;
-  return url;
 }
 
 function resolveRAuthBridgeUrl(pathname: string): string {

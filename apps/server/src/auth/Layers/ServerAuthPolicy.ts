@@ -14,7 +14,9 @@ export const makeServerAuthPolicy = Effect.gen(function* () {
     typeof config.rAuthBaseUrl === "string" &&
     config.rAuthBaseUrl.trim().length > 0 &&
     typeof config.rAuthIssuer === "string" &&
-    config.rAuthIssuer.trim().length > 0;
+    config.rAuthIssuer.trim().length > 0 &&
+    typeof config.rAuthGrantSharedSecret === "string" &&
+    config.rAuthGrantSharedSecret.trim().length > 0;
 
   const policy =
     config.mode === "desktop"

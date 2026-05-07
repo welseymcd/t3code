@@ -52,7 +52,7 @@ describe("rAuth api", () => {
 
   it("defaults the auth sign-in url to the hosted API T3 auth route", () => {
     expect(resolveRAuthLoginUrl()).toBe(
-      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3code%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252F",
+      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252F",
     );
   });
 
@@ -61,7 +61,7 @@ describe("rAuth api", () => {
     openRAuthSignInWindow();
 
     expect(openMock).toHaveBeenCalledWith(
-      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3code%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252F",
+      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252F",
       "r-auth-sign-in",
       "popup,width=720,height=840",
     );
@@ -73,7 +73,7 @@ describe("rAuth api", () => {
     openRAuthSignInWindow("http://localhost/settings/connections");
 
     expect(openMock).toHaveBeenCalledWith(
-      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3code%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252Fsettings%252Fconnections",
+      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252Fsettings%252Fconnections",
       "r-auth-sign-in",
       "popup,width=720,height=840",
     );
@@ -86,7 +86,7 @@ describe("rAuth api", () => {
         claimProof: "proof.token",
       }),
     ).toBe(
-      "https://auth.rmcd.cc/dashboard/t3/authorize?redirectTo=t3code%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252Fpair%26environmentId%3Denvironment-123%26claimProof%3Dproof.token",
+      "https://auth.rmcd.cc/dashboard/t3/authorize?redirectTo=t3%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252Fpair%26environmentId%3Denvironment-123%26claimProof%3Dproof.token",
     );
   });
 
@@ -94,21 +94,7 @@ describe("rAuth api", () => {
     expect(
       resolveRAuthLoginUrl(undefined, "http://localhost/settings/connections?tab=auth&x=1"),
     ).toBe(
-      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3code%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252Fsettings%252Fconnections%253Ftab%253Dauth%2526x%253D1",
-    );
-  });
-
-  it("does not reuse a stale callback URL as the hosted auth return target", () => {
-    const staleCallbackUrl = new URL("http://127.0.0.1:3773/auth/r-auth/callback");
-    staleCallbackUrl.searchParams.set("redirectTo", "http://127.0.0.1:3773/#/settings/connections");
-    staleCallbackUrl.searchParams.set("credential", "stale-token");
-
-    expect(
-      resolveRAuthLoginUrl(undefined, staleCallbackUrl.toString(), {
-        environmentId: "environment-123",
-      }),
-    ).toBe(
-      "https://auth.rmcd.cc/dashboard/t3/authorize?redirectTo=t3code%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252F127.0.0.1%253A3773%252F%2523%252Fsettings%252Fconnections%26environmentId%3Denvironment-123",
+      "https://auth.rmcd.cc/api/t3/auth?redirectTo=t3%3A%2F%2Fauth%2Fr-auth%2Fcallback%3FredirectTo%3Dhttp%253A%252F%252Flocalhost%252Fsettings%252Fconnections%253Ftab%253Dauth%2526x%253D1",
     );
   });
 

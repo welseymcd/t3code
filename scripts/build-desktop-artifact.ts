@@ -567,7 +567,7 @@ export function resolveDesktopProtocolConfig(): ReadonlyArray<DesktopProtocolCon
   return [
     {
       name: "t3code",
-      schemes: ["t3code"],
+      schemes: ["t3"],
     },
   ];
 }

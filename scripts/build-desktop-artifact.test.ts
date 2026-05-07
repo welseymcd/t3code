@@ -28,7 +28,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(resolveDesktopProtocolConfig(), [
       {
         name: "t3code",
-        schemes: ["t3code"],
+        schemes: ["t3"],
       },
     ]);
   });

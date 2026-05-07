@@ -7,11 +7,11 @@ describe("resolveDesktopDeepLinkRouteUrl", () => {
     expect(
       resolveDesktopDeepLinkRouteUrl({
         deepLinkUrl:
-          "t3code://auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A3773%2F%23%2Fsettings%2Fconnections",
+          "t3://auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A3773%2Fsettings%2Fconnections",
         fallbackRootUrl: "http://127.0.0.1:3773/",
       }),
     ).toBe(
-      "http://localhost:3773/#/auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A3773%2F%23%2Fsettings%2Fconnections",
+      "http://localhost:3773/auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A3773%2Fsettings%2Fconnections",
     );
   });
 
@@ -19,11 +19,11 @@ describe("resolveDesktopDeepLinkRouteUrl", () => {
     expect(
       resolveDesktopDeepLinkRouteUrl({
         deepLinkUrl:
-          "t3code://auth/r-auth/callback?redirectTo=https%3A%2F%2Fexample.com%2Fsettings%2Fconnections",
+          "t3://auth/r-auth/callback?redirectTo=https%3A%2F%2Fexample.com%2Fsettings%2Fconnections",
         fallbackRootUrl: "http://127.0.0.1:3773/",
       }),
     ).toBe(
-      "http://127.0.0.1:3773/#/auth/r-auth/callback?redirectTo=https%3A%2F%2Fexample.com%2Fsettings%2Fconnections",
+      "http://127.0.0.1:3773/auth/r-auth/callback?redirectTo=https%3A%2F%2Fexample.com%2Fsettings%2Fconnections",
     );
   });
 
@@ -31,30 +31,18 @@ describe("resolveDesktopDeepLinkRouteUrl", () => {
     expect(
       resolveDesktopDeepLinkRouteUrl({
         deepLinkUrl:
-          "t3code://auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A5173%2Fsettings%2Fconnections",
+          "t3://auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A5173%2Fsettings%2Fconnections",
         fallbackRootUrl: "http://127.0.0.1:3773/",
       }),
     ).toBe(
-      "http://127.0.0.1:3773/#/auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A5173%2Fsettings%2Fconnections",
-    );
-  });
-
-  it("preserves hosted auth callback parameters on the local callback route", () => {
-    expect(
-      resolveDesktopDeepLinkRouteUrl({
-        deepLinkUrl:
-          "t3code://auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A3773%2Fsettings%2Fconnections&environmentId=environment-1&credential=header.payload.signature&error=Sign%20in%20failed",
-        fallbackRootUrl: "http://127.0.0.1:3773/",
-      }),
-    ).toBe(
-      "http://localhost:3773/#/auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A3773%2Fsettings%2Fconnections&environmentId=environment-1&credential=header.payload.signature&error=Sign+in+failed",
+      "http://127.0.0.1:3773/auth/r-auth/callback?redirectTo=http%3A%2F%2Flocalhost%3A5173%2Fsettings%2Fconnections",
     );
   });
 
   it("ignores unsupported deep links", () => {
     expect(
       resolveDesktopDeepLinkRouteUrl({
-        deepLinkUrl: "t3code://workspace/open?path=%2Ftmp",
+        deepLinkUrl: "t3://workspace/open?path=%2Ftmp",
         fallbackRootUrl: "http://127.0.0.1:3773/",
       }),
     ).toBe(null);
@@ -63,8 +51,8 @@ describe("resolveDesktopDeepLinkRouteUrl", () => {
 
 describe("findDesktopDeepLinkArg", () => {
   it("finds the t3 protocol argv entry", () => {
-    expect(findDesktopDeepLinkArg(["/Applications/T3.app", "t3code://auth/r-auth/callback"])).toBe(
-      "t3code://auth/r-auth/callback",
+    expect(findDesktopDeepLinkArg(["/Applications/T3.app", "t3://auth/r-auth/callback"])).toBe(
+      "t3://auth/r-auth/callback",
     );
   });
 });

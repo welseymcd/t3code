@@ -1,4 +1,4 @@
-const DESKTOP_DEEP_LINK_SCHEME = "t3code:";
+const DESKTOP_SCHEME = "t3:";
 const AUTH_DEEP_LINK_HOST = "auth";
 const R_AUTH_CALLBACK_PATHNAME = "/r-auth/callback";
 const R_AUTH_CALLBACK_ROUTE_PATHNAME = "/auth/r-auth/callback";
@@ -74,7 +74,7 @@ export function resolveDesktopDeepLinkRouteUrl(input: {
   }
 
   if (
-    deepLinkUrl.protocol !== DESKTOP_DEEP_LINK_SCHEME ||
+    deepLinkUrl.protocol !== DESKTOP_SCHEME ||
     deepLinkUrl.hostname !== AUTH_DEEP_LINK_HOST ||
     deepLinkUrl.pathname !== R_AUTH_CALLBACK_PATHNAME
   ) {
@@ -90,15 +90,10 @@ export function resolveDesktopDeepLinkRouteUrl(input: {
     return null;
   }
 
-  const localUrl = new URL("/", rootUrl.origin);
-  const routeSearchParams = new URLSearchParams();
-  for (const [key, value] of deepLinkUrl.searchParams) {
-    routeSearchParams.append(key, value);
+  const localUrl = new URL(R_AUTH_CALLBACK_ROUTE_PATHNAME, rootUrl.origin);
+  if (redirectTo) {
+    localUrl.searchParams.set("redirectTo", redirectTo);
   }
-  const routeSearch = routeSearchParams.toString();
-  localUrl.hash = routeSearch
-    ? `${R_AUTH_CALLBACK_ROUTE_PATHNAME}?${routeSearch}`
-    : R_AUTH_CALLBACK_ROUTE_PATHNAME;
   return localUrl.toString();
 }
 
@@ -106,7 +101,7 @@ export function isSupportedDesktopDeepLink(inputUrl: string): boolean {
   try {
     const deepLinkUrl = new URL(inputUrl);
     return (
-      deepLinkUrl.protocol === DESKTOP_DEEP_LINK_SCHEME &&
+      deepLinkUrl.protocol === DESKTOP_SCHEME &&
       deepLinkUrl.hostname === AUTH_DEEP_LINK_HOST &&
       deepLinkUrl.pathname === R_AUTH_CALLBACK_PATHNAME
     );
@@ -116,5 +111,5 @@ export function isSupportedDesktopDeepLink(inputUrl: string): boolean {
 }
 
 export function findDesktopDeepLinkArg(argv: ReadonlyArray<string>): string | undefined {
-  return argv.find((arg) => arg.startsWith("t3code://"));
+  return argv.find((arg) => arg.startsWith("t3://"));
 }

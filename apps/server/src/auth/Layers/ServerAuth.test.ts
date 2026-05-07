@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { vi } from "vitest";
 
 import type { ServerConfigShape } from "../../config.ts";
 import { ServerConfig } from "../../config.ts";
@@ -116,67 +115,6 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       expect(verified.role).toBe("owner");
       expect(verified.subject).toBe("owner-bootstrap");
     }).pipe(Effect.provide(makeServerAuthLayer())),
-  );
-
-  it.effect(
-    "exchanges r-auth grants through the hosted verifier when no local secret is configured",
-    () =>
-      Effect.gen(function* () {
-        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-          new Response(
-            JSON.stringify({
-              ok: true,
-              grant: {
-                v: 1,
-                iss: "https://auth.example.com",
-                aud: "environment-123",
-                sub: "user-123",
-                role: "client",
-                email: "user@example.com",
-                name: "User",
-                iat: 1_776_000_000,
-                exp: 4_102_444_800,
-              },
-            }),
-            {
-              headers: {
-                "content-type": "application/json",
-              },
-              status: 200,
-            },
-          ),
-        );
-        vi.stubGlobal("fetch", fetchMock);
-
-        const serverAuth = yield* ServerAuth;
-        const exchanged = yield* serverAuth.exchangeRAuthGrantCredential(
-          "remote-grant-token",
-          requestMetadata,
-          "environment-123",
-        );
-        const verified = yield* serverAuth.authenticateHttpRequest(
-          makeCookieRequest(exchanged.sessionToken),
-        );
-
-        expect(fetchMock).toHaveBeenCalledWith(
-          new URL("https://auth.example.com/rest/v1/t3/grants/verify"),
-          expect.objectContaining({
-            body: JSON.stringify({ credential: "remote-grant-token" }),
-            method: "POST",
-          }),
-        );
-        expect(verified.subject).toBe("user-123");
-        expect(verified.role).toBe("client");
-      }).pipe(
-        Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals())),
-        Effect.provide(
-          makeServerAuthLayer({
-            rAuthEnabled: true,
-            rAuthBaseUrl: "https://auth.example.com",
-            rAuthIssuer: "https://auth.example.com",
-          }),
-        ),
-      ),
   );
 
   it.effect("lists pairing links and revokes other client sessions while keeping the owner", () =>
