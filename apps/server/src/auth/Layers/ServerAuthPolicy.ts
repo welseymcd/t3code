@@ -9,14 +9,6 @@ import { isLoopbackHost, isWildcardHost } from "../../startupAccess.ts";
 export const makeServerAuthPolicy = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const isRemoteReachable = isWildcardHost(config.host) || !isLoopbackHost(config.host);
-  const centralizedAuthConfigured =
-    config.rAuthEnabled &&
-    typeof config.rAuthBaseUrl === "string" &&
-    config.rAuthBaseUrl.trim().length > 0 &&
-    typeof config.rAuthIssuer === "string" &&
-    config.rAuthIssuer.trim().length > 0 &&
-    typeof config.rAuthGrantSharedSecret === "string" &&
-    config.rAuthGrantSharedSecret.trim().length > 0;
 
   const policy =
     config.mode === "desktop"
@@ -27,16 +19,12 @@ export const makeServerAuthPolicy = Effect.gen(function* () {
         ? "remote-reachable"
         : "loopback-browser";
 
-  const bootstrapMethods: Array<ServerAuthDescriptor["bootstrapMethods"][number]> =
+  const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
     policy === "desktop-managed-local"
       ? ["desktop-bootstrap"]
       : config.mode === "desktop" && policy === "remote-reachable"
         ? ["desktop-bootstrap", "one-time-token"]
         : ["one-time-token"];
-
-  if (centralizedAuthConfigured) {
-    bootstrapMethods.push("r-auth-grant");
-  }
 
   const descriptor: ServerAuthDescriptor = {
     policy,

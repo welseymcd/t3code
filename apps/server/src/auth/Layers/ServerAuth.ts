@@ -1,10 +1,8 @@
 import {
   type AuthBearerBootstrapResult,
-  type AuthClientMetadata,
   type AuthClientSession,
   type AuthBootstrapResult,
   type AuthPairingCredentialResult,
-  type RAuthClaimProof,
   type AuthSessionState,
   type AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
@@ -26,12 +24,7 @@ import {
   SessionCredentialError,
   SessionCredentialService,
 } from "../Services/SessionCredentialService.ts";
-import {
-  issueRAuthClaimProof as signRAuthClaimProof,
-  verifyRAuthGrantCredential,
-} from "../Services/RAuthGrantVerification.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
-import { ServerConfig } from "../../config.ts";
 
 type BootstrapExchangeResult = {
   readonly response: AuthBootstrapResult;
@@ -67,20 +60,11 @@ function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string 
 }
 
 export const makeServerAuth = Effect.gen(function* () {
-  const config = yield* ServerConfig;
   const policy = yield* ServerAuthPolicy;
   const bootstrapCredentials = yield* BootstrapCredentialService;
   const authControlPlane = yield* AuthControlPlane;
   const sessions = yield* SessionCredentialService;
   const descriptor = yield* policy.getDescriptor();
-  const centralizedAuthConfigured =
-    config.rAuthEnabled &&
-    typeof config.rAuthBaseUrl === "string" &&
-    config.rAuthBaseUrl.trim().length > 0 &&
-    typeof config.rAuthIssuer === "string" &&
-    config.rAuthIssuer.trim().length > 0 &&
-    typeof config.rAuthGrantSharedSecret === "string" &&
-    config.rAuthGrantSharedSecret.trim().length > 0;
 
   const authenticateToken = (token: string): Effect.Effect<AuthenticatedSession, AuthError> =>
     sessions.verify(token).pipe(
@@ -220,162 +204,6 @@ export const makeServerAuth = Effect.gen(function* () {
             }) satisfies AuthBearerBootstrapResult,
         ),
       );
-
-  const issueGrantedSession = (
-    method: "browser-session-cookie" | "bearer-session-token",
-    grant: {
-      readonly subject: string;
-      readonly role: "owner" | "client";
-    },
-    requestMetadata: AuthClientMetadata,
-  ) =>
-    sessions.issue({
-      method,
-      subject: grant.subject,
-      role: grant.role,
-      client: requestMetadata,
-    });
-
-  const mapGrantIssueError = (cause: unknown) =>
-    new AuthError({
-      message: "Failed to issue authenticated session.",
-      cause,
-    });
-
-  const mapRAuthGrantError = (cause: {
-    readonly kind:
-      | "malformed-credential"
-      | "invalid-signature"
-      | "unexpected-issuer"
-      | "unexpected-audience"
-      | "expired";
-    readonly message: string;
-    readonly cause?: unknown;
-  }) =>
-    new AuthError({
-      message:
-        cause.kind === "malformed-credential"
-          ? "Invalid r-auth grant."
-          : cause.kind === "invalid-signature"
-            ? "Invalid r-auth grant signature."
-            : cause.kind === "unexpected-issuer"
-              ? "Unexpected r-auth grant issuer."
-              : cause.kind === "unexpected-audience"
-                ? "This grant is for a different environment."
-                : "r-auth grant expired.",
-      status: 401,
-      cause,
-    });
-
-  const exchangeRAuthGrantCredential: ServerAuthShape["exchangeRAuthGrantCredential"] = (
-    credential,
-    requestMetadata,
-    expectedEnvironmentId,
-  ) =>
-    Effect.gen(function* () {
-      if (!centralizedAuthConfigured) {
-        return yield* new AuthError({
-          message: "Centralized auth is disabled on this server.",
-          status: 503,
-        });
-      }
-
-      const now = yield* DateTime.now;
-      const expectedIssuer = config.rAuthIssuer ?? "";
-      const expectedSharedSecret = Buffer.from(config.rAuthGrantSharedSecret ?? "", "utf8");
-
-      return yield* verifyRAuthGrantCredential(credential, {
-        expectedIssuer,
-        expectedSharedSecret,
-        expectedEnvironmentId,
-        now,
-      }).pipe(
-        Effect.mapError(mapRAuthGrantError),
-        Effect.flatMap((grant) =>
-          issueGrantedSession("browser-session-cookie", grant, requestMetadata).pipe(
-            Effect.mapError(mapGrantIssueError),
-          ),
-        ),
-        Effect.map(
-          (session) =>
-            ({
-              response: {
-                authenticated: true,
-                role: session.role,
-                sessionMethod: session.method,
-                expiresAt: DateTime.toUtc(session.expiresAt),
-              } satisfies AuthBootstrapResult,
-              sessionToken: session.token,
-            }) satisfies BootstrapExchangeResult,
-        ),
-      );
-    });
-
-  const exchangeRAuthGrantCredentialForBearerSession: ServerAuthShape["exchangeRAuthGrantCredentialForBearerSession"] =
-    (credential, requestMetadata, expectedEnvironmentId) => {
-      if (!centralizedAuthConfigured) {
-        return Effect.fail(
-          new AuthError({
-            message: "Centralized auth is disabled on this server.",
-            status: 503,
-          }),
-        );
-      }
-
-      return Effect.gen(function* () {
-        const now = yield* DateTime.now;
-        const grant = yield* verifyRAuthGrantCredential(credential, {
-          expectedIssuer: config.rAuthIssuer ?? "",
-          expectedSharedSecret: Buffer.from(config.rAuthGrantSharedSecret ?? "", "utf8"),
-          expectedEnvironmentId,
-          now,
-        }).pipe(Effect.mapError(mapRAuthGrantError));
-
-        const session = yield* issueGrantedSession(
-          "bearer-session-token",
-          grant,
-          requestMetadata,
-        ).pipe(Effect.mapError(mapGrantIssueError));
-
-        return {
-          authenticated: true,
-          role: session.role,
-          sessionMethod: "bearer-session-token",
-          expiresAt: DateTime.toUtc(session.expiresAt),
-          sessionToken: session.token,
-        } satisfies AuthBearerBootstrapResult;
-      });
-    };
-
-  const issueRAuthClaimProof: ServerAuthShape["issueRAuthClaimProof"] = (input) =>
-    Effect.gen(function* () {
-      if (!centralizedAuthConfigured) {
-        return yield* new AuthError({
-          message: "Centralized auth is disabled on this server.",
-          status: 503,
-        });
-      }
-
-      const now = yield* DateTime.now;
-      const issuedAt = now;
-      const expiresAt = DateTime.add(now, { minutes: 15 });
-      return {
-        environmentId: input.environmentId,
-        audience: config.rAuthIssuer ?? "",
-        issuedAt: DateTime.toUtc(issuedAt),
-        expiresAt: DateTime.toUtc(expiresAt),
-        proof: signRAuthClaimProof({
-          audience: config.rAuthIssuer ?? "",
-          environmentId: input.environmentId,
-          label: input.label,
-          httpBaseUrl: input.httpBaseUrl,
-          wsBaseUrl: input.wsBaseUrl,
-          issuedAt,
-          expiresAt,
-          secret: Buffer.from(config.rAuthGrantSharedSecret ?? "", "utf8"),
-        }),
-      } satisfies RAuthClaimProof;
-    });
 
   const issuePairingCredential: ServerAuthShape["issuePairingCredential"] = (input) =>
     authControlPlane
@@ -547,9 +375,6 @@ export const makeServerAuth = Effect.gen(function* () {
     getSessionState,
     exchangeBootstrapCredential,
     exchangeBootstrapCredentialForBearerSession,
-    exchangeRAuthGrantCredential,
-    exchangeRAuthGrantCredentialForBearerSession,
-    issueRAuthClaimProof,
     issuePairingCredential,
     listPairingLinks,
     revokePairingLink,

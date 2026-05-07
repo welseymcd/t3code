@@ -381,49 +381,6 @@ describe("resolveInitialServerAuthGateState", () => {
     });
   });
 
-  it("submits centralized r-auth grants to the bootstrap endpoint", async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          authenticated: true,
-          role: "owner",
-          sessionMethod: "browser-session-cookie",
-          expiresAt: "2026-04-05T00:00:00.000Z",
-        }),
-      )
-      .mockResolvedValueOnce(
-        sessionResponse({
-          authenticated: true,
-          auth: {
-            policy: "desktop-managed-local",
-            bootstrapMethods: ["r-auth-grant"],
-            sessionMethods: ["browser-session-cookie"],
-            sessionCookieName: "t3_session",
-          },
-          role: "owner",
-          sessionMethod: "browser-session-cookie",
-          expiresAt: "2026-04-05T00:00:00.000Z",
-        }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { submitServerRAuthCredential } = await import("./environments/primary");
-
-    await expect(submitServerRAuthCredential("grant-token")).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost/api/auth/bootstrap/r-auth", {
-      body: JSON.stringify({ credential: "grant-token" }),
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-      },
-      method: "POST",
-    });
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost/api/auth/session", {
-      credentials: "include",
-    });
-  });
-
   it("waits for the authenticated session to become observable after silent desktop bootstrap", async () => {
     vi.useFakeTimers();
     const fetchMock = vi

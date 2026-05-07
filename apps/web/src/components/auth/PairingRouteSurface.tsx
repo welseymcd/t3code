@@ -7,16 +7,7 @@ import {
   peekPairingTokenFromUrl,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
-  submitServerRAuthCredential,
-  usePrimaryEnvironmentId,
 } from "../../environments/primary";
-import type { RAuthAuthorizedEnvironment } from "@t3tools/contracts";
-import {
-  fetchRAuthSessionState,
-  openRAuthSignInWindow,
-  requestRAuthGrant,
-} from "../../environments/rAuth/api";
-import { subscribeBrowserRAuthSessionStateChanges } from "../../clientPersistenceStorage";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -59,7 +50,6 @@ export function PairingRouteSurface({
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
-  const supportsCentralizedBootstrap = auth.bootstrapMethods.includes("r-auth-grant");
 
   const submitCredential = useCallback(
     async (nextCredential: string) => {
@@ -166,141 +156,7 @@ export function PairingRouteSurface({
         <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
           {describeSupportedMethods(auth.bootstrapMethods)}
         </div>
-
-        {supportsCentralizedBootstrap ? (
-          <RAuthBootstrapSurface onAuthenticated={onAuthenticated} auth={auth} />
-        ) : null}
       </section>
-    </div>
-  );
-}
-
-function RAuthBootstrapSurface({
-  auth,
-  onAuthenticated,
-}: {
-  auth: AuthSessionState["auth"];
-  onAuthenticated: () => void;
-}) {
-  const currentEnvironmentId = usePrimaryEnvironmentId();
-  const [session, setSession] = useState<Awaited<ReturnType<typeof fetchRAuthSessionState>> | null>(
-    null,
-  );
-  const [environments, setEnvironments] = useState<ReadonlyArray<RAuthAuthorizedEnvironment>>([]);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-
-  const loadCentralizedAuthState = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setErrorMessage(null);
-      const nextSession = await fetchRAuthSessionState();
-      setSession(nextSession);
-      setEnvironments(nextSession.authorizedEnvironments);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to load r-auth state.");
-      setSession(null);
-      setEnvironments([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadCentralizedAuthState();
-  }, [loadCentralizedAuthState]);
-
-  useEffect(
-    () => subscribeBrowserRAuthSessionStateChanges(() => void loadCentralizedAuthState()),
-    [loadCentralizedAuthState],
-  );
-
-  const handleOpenSignIn = () => {
-    try {
-      openRAuthSignInWindow(window.location.href, {
-        environmentId: currentEnvironmentId,
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to open r-auth.");
-    }
-  };
-
-  const handleConnectCurrentBackend = useCallback(async () => {
-    if (!currentEnvironmentId) {
-      setErrorMessage("Unable to determine the current environment.");
-      return;
-    }
-    setIsConnecting(true);
-    setErrorMessage(null);
-    try {
-      const grant = await requestRAuthGrant({ environmentId: currentEnvironmentId });
-      await submitServerRAuthCredential(grant.credential);
-      startTransition(() => {
-        onAuthenticated();
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to exchange r-auth grant.");
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [currentEnvironmentId, onAuthenticated]);
-
-  const sessionLabel = (() => {
-    if (isLoading) return "Loading r-auth session…";
-    if (!session?.authenticated) return "Not signed in to r-auth.";
-    const identity = session.identity;
-    if (!identity) return "Signed in.";
-    return [identity.displayName ?? identity.subject, identity.email].filter(Boolean).join(" · ");
-  })();
-
-  const environmentLabels =
-    environments.length > 0
-      ? environments.map((environment) => `${environment.label} (${environment.role})`)
-      : ["No authorized environments yet."];
-
-  return (
-    <div className="mt-6 rounded-2xl border border-border/70 bg-background/55 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-            r-auth
-          </p>
-          <p className="mt-1 text-sm text-foreground">{sessionLabel}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="xs" variant="outline" onClick={() => void loadCentralizedAuthState()}>
-            Refresh
-          </Button>
-          <Button size="xs" variant="outline" onClick={handleOpenSignIn}>
-            Open sign-in
-          </Button>
-          <Button
-            size="xs"
-            onClick={() => void handleConnectCurrentBackend()}
-            disabled={!session?.authenticated || isConnecting || currentEnvironmentId === null}
-          >
-            {isConnecting ? "Connecting…" : "Connect current backend"}
-          </Button>
-        </div>
-      </div>
-
-      {errorMessage ? <p className="mt-3 text-xs text-destructive">{errorMessage}</p> : null}
-
-      <div className="mt-4 space-y-2 text-xs text-muted-foreground">
-        <p>
-          {currentEnvironmentId
-            ? `Current environment: ${currentEnvironmentId}`
-            : "Waiting for the current environment descriptor."}
-        </p>
-        <p>Authorized environments:</p>
-        <ul className="space-y-1">
-          {environmentLabels.map((label) => (
-            <li key={label}>{label}</li>
-          ))}
-        </ul>
-        <p>{describeAuthGate(auth.bootstrapMethods)}</p>
-      </div>
     </div>
   );
 }

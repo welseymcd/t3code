@@ -84,11 +84,6 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
-import {
-  findDesktopDeepLinkArg,
-  isSupportedDesktopDeepLink,
-  resolveDesktopDeepLinkRouteUrl as resolveDesktopDeepLinkRouteUrlForRoot,
-} from "./deepLinks.ts";
 
 syncShellEnvironment();
 
@@ -233,7 +228,6 @@ let backendAdvertisedHost: string | null = null;
 let backendReadinessAbortController: AbortController | null = null;
 let backendInitialWindowOpenInFlight: Promise<void> | null = null;
 let backendListeningDetector: ServerListeningDetector | null = null;
-let pendingDesktopDeepLinkUrl: string | null = null;
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
@@ -1152,14 +1146,6 @@ function configureAppIdentity(): void {
     (app as LinuxDesktopNamedApp).setDesktopName?.(LINUX_DESKTOP_ENTRY_NAME);
   }
 
-  if (isDevelopment) {
-    const scriptPath = process.argv[1]?.trim();
-    const protocolClientArgs = scriptPath ? [Path.resolve(scriptPath)] : [];
-    app.setAsDefaultProtocolClient(DESKTOP_SCHEME, process.execPath, protocolClientArgs);
-  } else {
-    app.setAsDefaultProtocolClient(DESKTOP_SCHEME);
-  }
-
   if (process.platform === "darwin" && app.dock) {
     const iconPath = resolveIconPath("png");
     if (iconPath) {
@@ -1197,55 +1183,6 @@ function revealWindow(window: BrowserWindow): void {
   }
 
   window.focus();
-}
-
-function resolveDesktopRootUrl(): string | null {
-  if (isDevelopment) {
-    return resolveDesktopDevServerUrl();
-  }
-
-  return backendHttpUrl.length > 0 ? backendHttpUrl : null;
-}
-
-function resolveDesktopDeepLinkRouteUrl(inputUrl: string): string | null {
-  return resolveDesktopDeepLinkRouteUrlForRoot({
-    deepLinkUrl: inputUrl,
-    fallbackRootUrl: resolveDesktopRootUrl(),
-  });
-}
-
-function handleDesktopDeepLink(inputUrl: string): void {
-  const resolvedUrl = resolveDesktopDeepLinkRouteUrl(inputUrl);
-  if (!resolvedUrl) {
-    if (isSupportedDesktopDeepLink(inputUrl)) {
-      pendingDesktopDeepLinkUrl = inputUrl;
-    }
-    return;
-  }
-
-  const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
-  if (window && !window.isDestroyed()) {
-    void window.loadURL(resolvedUrl);
-    revealWindow(window);
-    return;
-  }
-
-  pendingDesktopDeepLinkUrl = resolvedUrl;
-}
-
-function resolvePendingDesktopInitialUrl(defaultUrl: string): string {
-  if (!pendingDesktopDeepLinkUrl) {
-    return defaultUrl;
-  }
-
-  if (
-    pendingDesktopDeepLinkUrl.startsWith("http://") ||
-    pendingDesktopDeepLinkUrl.startsWith("https://")
-  ) {
-    return pendingDesktopDeepLinkUrl;
-  }
-
-  return resolveDesktopDeepLinkRouteUrl(pendingDesktopDeepLinkUrl) ?? defaultUrl;
 }
 
 function emitUpdateState(): void {
@@ -2192,12 +2129,11 @@ function createWindow(): BrowserWindow {
   bindFirstRevealTrigger(revealSubscribers, () => revealWindow(window));
 
   if (isDevelopment) {
-    void window.loadURL(resolvePendingDesktopInitialUrl(resolveDesktopDevServerUrl()));
+    void window.loadURL(resolveDesktopDevServerUrl());
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadURL(resolvePendingDesktopInitialUrl(backendHttpUrl));
+    void window.loadURL(backendHttpUrl);
   }
-  pendingDesktopDeepLinkUrl = null;
 
   window.on("closed", () => {
     desktopSshEnvironmentBridge.cancelPendingPasswordPrompts(
@@ -2217,36 +2153,6 @@ function createWindow(): BrowserWindow {
 app.setPath("userData", resolveUserDataPath());
 
 configureAppIdentity();
-
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
-  app.quit();
-} else {
-  const initialDeepLink = findDesktopDeepLinkArg(process.argv);
-  if (initialDeepLink) {
-    handleDesktopDeepLink(initialDeepLink);
-  }
-
-  if (process.platform === "darwin") {
-    app.on("open-url", (event, url) => {
-      event.preventDefault();
-      handleDesktopDeepLink(url);
-    });
-  }
-
-  app.on("second-instance", (_event, argv) => {
-    const deepLink = findDesktopDeepLinkArg(argv);
-    if (deepLink) {
-      handleDesktopDeepLink(deepLink);
-      return;
-    }
-
-    const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    if (existingWindow) {
-      revealWindow(existingWindow);
-    }
-  });
-}
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");

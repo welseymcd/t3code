@@ -45,14 +45,8 @@ export type ServerAuthPolicy = typeof ServerAuthPolicy.Type;
  *   shell can pair the renderer without a login screen
  * - `one-time-token`: a short-lived pairing token, suitable for manual pairing
  *   flows such as `/pair?token=...`
- * - `r-auth-grant`: a short-lived grant minted by centralized `r-auth`
- *   authorization and exchanged for a normal T3 session
  */
-export const ServerAuthBootstrapMethod = Schema.Literals([
-  "desktop-bootstrap",
-  "one-time-token",
-  "r-auth-grant",
-]);
+export const ServerAuthBootstrapMethod = Schema.Literals(["desktop-bootstrap", "one-time-token"]);
 export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
 
 /**
@@ -261,65 +255,6 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
-
-export const RAuthGrantRole = AuthSessionRole;
-export type RAuthGrantRole = typeof RAuthGrantRole.Type;
-
-export const RAuthGrantClaims = Schema.Struct({
-  v: Schema.Literal(1),
-  iss: TrimmedNonEmptyString,
-  aud: TrimmedNonEmptyString,
-  sub: TrimmedNonEmptyString,
-  role: RAuthGrantRole,
-  email: TrimmedNonEmptyString,
-  name: Schema.String,
-  iat: Schema.Number,
-  exp: Schema.Number,
-});
-export type RAuthGrantClaims = typeof RAuthGrantClaims.Type;
-
-export const RAuthAuthorizedEnvironment = Schema.Struct({
-  environmentId: TrimmedNonEmptyString,
-  label: TrimmedNonEmptyString,
-  role: RAuthGrantRole,
-  reachable: Schema.Boolean,
-});
-export type RAuthAuthorizedEnvironment = typeof RAuthAuthorizedEnvironment.Type;
-
-export const RAuthIdentity = Schema.Struct({
-  subject: TrimmedNonEmptyString,
-  email: Schema.optionalKey(TrimmedNonEmptyString),
-  displayName: Schema.optionalKey(TrimmedNonEmptyString),
-});
-export type RAuthIdentity = typeof RAuthIdentity.Type;
-
-export const RAuthSessionState = Schema.Struct({
-  authenticated: Schema.Boolean,
-  identity: Schema.NullOr(RAuthIdentity),
-  authorizedEnvironments: Schema.Array(RAuthAuthorizedEnvironment),
-  expiresAt: Schema.NullOr(Schema.DateTimeUtc),
-});
-export type RAuthSessionState = typeof RAuthSessionState.Type;
-
-export const RAuthGrantRequest = Schema.Struct({
-  environmentId: TrimmedNonEmptyString,
-});
-export type RAuthGrantRequest = typeof RAuthGrantRequest.Type;
-
-export const RAuthGrantCredentialResult = Schema.Struct({
-  credential: TrimmedNonEmptyString,
-  expiresAt: Schema.DateTimeUtc,
-});
-export type RAuthGrantCredentialResult = typeof RAuthGrantCredentialResult.Type;
-
-export const RAuthClaimProof = Schema.Struct({
-  environmentId: TrimmedNonEmptyString,
-  audience: TrimmedNonEmptyString,
-  issuedAt: Schema.DateTimeUtc,
-  expiresAt: Schema.DateTimeUtc,
-  proof: TrimmedNonEmptyString,
-});
-export type RAuthClaimProof = typeof RAuthClaimProof.Type;
 
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,

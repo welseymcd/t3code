@@ -10,7 +10,6 @@ const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
   wsBaseUrl: "wss://remote.example.com/",
   createdAt: "2026-04-09T00:00:00.000Z",
   lastConnectedAt: null,
-  authSource: "r-auth",
   desktopSsh: {
     alias: "devbox",
     hostname: "devbox.example.com",

@@ -11,9 +11,6 @@ import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorag
 
 export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 export const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY = "t3code:saved-environment-registry:v1";
-export const R_AUTH_SESSION_STATE_STORAGE_KEY = "t3code:r-auth-session-state:v1";
-export const R_AUTH_SESSION_STATE_CHANGED_EVENT = "t3code:r-auth-session-state-changed";
-const R_AUTH_SESSION_STATE_BROADCAST_CHANNEL = "t3code:r-auth-session-state";
 
 const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
@@ -22,13 +19,6 @@ const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   wsBaseUrl: Schema.String,
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
-  authSource: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("manual-pairing"),
-      Schema.Literal("r-auth"),
-      Schema.Literal("desktop-ssh"),
-    ]),
-  ),
   desktopSsh: Schema.optionalKey(
     Schema.Struct({
       alias: Schema.String,
@@ -40,9 +30,6 @@ const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   bearerToken: Schema.optionalKey(Schema.String),
 });
 type BrowserSavedEnvironmentRecord = typeof BrowserSavedEnvironmentRecordSchema.Type;
-type MutableBrowserSavedEnvironmentRecord = {
-  -readonly [Key in keyof BrowserSavedEnvironmentRecord]: BrowserSavedEnvironmentRecord[Key];
-};
 
 const BrowserSavedEnvironmentRegistryDocumentSchema = Schema.Struct({
   version: Schema.optionalKey(Schema.Number),
@@ -51,109 +38,8 @@ const BrowserSavedEnvironmentRegistryDocumentSchema = Schema.Struct({
 type BrowserSavedEnvironmentRegistryDocument =
   typeof BrowserSavedEnvironmentRegistryDocumentSchema.Type;
 
-const BrowserRAuthSessionStateSchema = Schema.Struct({
-  authenticated: Schema.Boolean,
-});
-type BrowserRAuthSessionState = typeof BrowserRAuthSessionStateSchema.Type;
-
 function hasWindow(): boolean {
   return typeof window !== "undefined";
-}
-
-export function readBrowserRAuthSessionState(): BrowserRAuthSessionState | null {
-  if (!hasWindow()) {
-    return null;
-  }
-
-  try {
-    return getLocalStorageItem(R_AUTH_SESSION_STATE_STORAGE_KEY, BrowserRAuthSessionStateSchema);
-  } catch {
-    return null;
-  }
-}
-
-export function writeBrowserRAuthSessionState(authenticated: boolean): void {
-  if (!hasWindow()) {
-    return;
-  }
-
-  setLocalStorageItem(
-    R_AUTH_SESSION_STATE_STORAGE_KEY,
-    { authenticated },
-    BrowserRAuthSessionStateSchema,
-  );
-  publishBrowserRAuthSessionStateChange({ authenticated });
-}
-
-function publishBrowserRAuthSessionStateChange(state: BrowserRAuthSessionState): void {
-  if (!hasWindow()) {
-    return;
-  }
-
-  if (typeof window.dispatchEvent === "function" && typeof CustomEvent !== "undefined") {
-    window.dispatchEvent(new CustomEvent(R_AUTH_SESSION_STATE_CHANGED_EVENT, { detail: state }));
-  }
-
-  if (typeof BroadcastChannel === "undefined") {
-    return;
-  }
-
-  const channel = new BroadcastChannel(R_AUTH_SESSION_STATE_BROADCAST_CHANNEL);
-  const postMessage = channel.postMessage.bind(channel) as (
-    message: BrowserRAuthSessionState,
-  ) => void;
-  postMessage(state);
-  channel.close();
-}
-
-export function subscribeBrowserRAuthSessionStateChanges(
-  callback: (state: BrowserRAuthSessionState | null) => void,
-): () => void {
-  if (!hasWindow()) {
-    return () => {};
-  }
-
-  const handleCustomEvent = (event: Event) => {
-    callback(
-      event instanceof CustomEvent &&
-        typeof event.detail === "object" &&
-        event.detail !== null &&
-        "authenticated" in event.detail
-        ? (event.detail as BrowserRAuthSessionState)
-        : readBrowserRAuthSessionState(),
-    );
-  };
-  const handleStorageEvent = (event: StorageEvent) => {
-    if (event.key === R_AUTH_SESSION_STATE_STORAGE_KEY) {
-      callback(readBrowserRAuthSessionState());
-    }
-  };
-
-  if (
-    typeof window.addEventListener !== "function" ||
-    typeof window.removeEventListener !== "function"
-  ) {
-    return () => {};
-  }
-
-  window.addEventListener(R_AUTH_SESSION_STATE_CHANGED_EVENT, handleCustomEvent);
-  window.addEventListener("storage", handleStorageEvent);
-
-  const channel =
-    typeof BroadcastChannel === "undefined"
-      ? null
-      : new BroadcastChannel(R_AUTH_SESSION_STATE_BROADCAST_CHANNEL);
-  const handleChannelMessage = () => callback(readBrowserRAuthSessionState());
-  if (channel) {
-    channel.addEventListener("message", handleChannelMessage);
-  }
-
-  return () => {
-    window.removeEventListener(R_AUTH_SESSION_STATE_CHANGED_EVENT, handleCustomEvent);
-    window.removeEventListener("storage", handleStorageEvent);
-    channel?.removeEventListener("message", handleChannelMessage);
-    channel?.close();
-  };
 }
 
 function toPersistedSavedEnvironmentRecord(
@@ -167,11 +53,7 @@ function toPersistedSavedEnvironmentRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  return {
-    ...nextRecord,
-    ...(record.authSource ? { authSource: record.authSource } : {}),
-    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
-  };
+  return record.desktopSsh ? { ...nextRecord, desktopSsh: record.desktopSsh } : nextRecord;
 }
 
 export function readBrowserClientSettings(): ClientSettings | null {
@@ -262,7 +144,6 @@ export function writeBrowserSavedEnvironmentRegistry(
             wsBaseUrl: record.wsBaseUrl,
             createdAt: record.createdAt,
             lastConnectedAt: record.lastConnectedAt,
-            ...(record.authSource ? { authSource: record.authSource } : {}),
             ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
             bearerToken,
           }
@@ -295,7 +176,7 @@ export function writeBrowserSavedEnvironmentSecret(
         return record;
       }
       found = true;
-      const nextRecord: MutableBrowserSavedEnvironmentRecord = {
+      const nextRecord = {
         environmentId: record.environmentId,
         label: record.label,
         httpBaseUrl: record.httpBaseUrl,
@@ -304,13 +185,7 @@ export function writeBrowserSavedEnvironmentSecret(
         lastConnectedAt: record.lastConnectedAt,
         bearerToken: secret,
       };
-      if (record.authSource) {
-        nextRecord.authSource = record.authSource;
-      }
-      if (record.desktopSsh) {
-        nextRecord.desktopSsh = record.desktopSsh;
-      }
-      return nextRecord;
+      return record.desktopSsh ? { ...nextRecord, desktopSsh: record.desktopSsh } : nextRecord;
     }),
   });
   return found;

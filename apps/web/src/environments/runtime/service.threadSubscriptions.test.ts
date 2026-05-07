@@ -20,7 +20,6 @@ const mockReadSavedEnvironmentBearerToken = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockGetPrimaryKnownEnvironment = vi.hoisted(() => vi.fn());
 const mockFetchRemoteSessionState = vi.fn();
-const mockRequestRAuthGrant = vi.fn();
 const mockConnectionReconnects: Array<ReturnType<typeof vi.fn>> = [];
 let savedEnvironmentRegistryListener: (() => void) | null = null;
 
@@ -38,11 +37,6 @@ vi.mock("../remote/api", () => ({
   fetchRemoteSessionState: mockFetchRemoteSessionState,
   isRemoteEnvironmentAuthHttpError: vi.fn(() => false),
   resolveRemoteWebSocketConnectionUrl: vi.fn(async () => "ws://remote.example.test/ws"),
-}));
-
-vi.mock("../rAuth/api", () => ({
-  isRAuthHttpError: vi.fn(() => false),
-  requestRAuthGrant: mockRequestRAuthGrant,
 }));
 
 vi.mock("./catalog", () => ({

@@ -16,7 +16,6 @@ export {
 
 export {
   addSavedEnvironment,
-  disconnectCentralizedAuthEnvironments,
   connectDesktopSshEnvironment,
   disconnectSavedEnvironment,
   ensureEnvironmentConnectionBootstrapped,

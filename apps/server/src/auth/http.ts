@@ -4,19 +4,13 @@ import {
   AuthCreatePairingCredentialInput,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
-  RAuthGrantCredentialResult,
-  RAuthGrantRequest,
-  type RAuthClaimProof,
   type AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
-import { DateTime, Effect, Option, Schema } from "effect";
+import { DateTime, Effect, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
-import { issueRAuthGrantCredential } from "./Services/RAuthGrantVerification.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
-import { ServerConfig } from "../config.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 
 export const respondToAuthError = (error: AuthError) =>
@@ -119,155 +113,6 @@ export const authBearerBootstrapRouteLayer = HttpRouter.add(
     return HttpServerResponse.jsonUnsafe(result satisfies AuthBearerBootstrapResult, {
       status: 200,
     });
-  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
-);
-
-export const authRAuthBootstrapRouteLayer = HttpRouter.add(
-  "POST",
-  "/api/auth/bootstrap/r-auth",
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* ServerAuth;
-    const serverEnvironment = yield* ServerEnvironment;
-    const sessions = yield* SessionCredentialService;
-    const payload = yield* HttpServerRequest.schemaBodyJson(AuthBootstrapInput).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AuthError({
-            message: "Invalid bootstrap payload.",
-            status: 400,
-            cause,
-          }),
-      ),
-    );
-    const expectedEnvironmentId = yield* serverEnvironment.getEnvironmentId;
-    const result = yield* serverAuth.exchangeRAuthGrantCredential(
-      payload.credential,
-      deriveAuthClientMetadata({ request }),
-      expectedEnvironmentId,
-    );
-
-    return yield* HttpServerResponse.jsonUnsafe(result.response, { status: 200 }).pipe(
-      HttpServerResponse.setCookie(sessions.cookieName, result.sessionToken, {
-        expires: DateTime.toDate(result.response.expiresAt),
-        httpOnly: true,
-        path: "/",
-        sameSite: "lax",
-      }),
-    );
-  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
-);
-
-export const authRAuthBearerBootstrapRouteLayer = HttpRouter.add(
-  "POST",
-  "/api/auth/bootstrap/r-auth/bearer",
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* ServerAuth;
-    const serverEnvironment = yield* ServerEnvironment;
-    const payload = yield* HttpServerRequest.schemaBodyJson(AuthBootstrapInput).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AuthError({
-            message: "Invalid bootstrap payload.",
-            status: 400,
-            cause,
-          }),
-      ),
-    );
-    const expectedEnvironmentId = yield* serverEnvironment.getEnvironmentId;
-    const result = yield* serverAuth.exchangeRAuthGrantCredentialForBearerSession(
-      payload.credential,
-      deriveAuthClientMetadata({ request }),
-      expectedEnvironmentId,
-    );
-    return HttpServerResponse.jsonUnsafe(result satisfies AuthBearerBootstrapResult, {
-      status: 200,
-    });
-  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
-);
-
-export const authRAuthClaimProofRouteLayer = HttpRouter.add(
-  "GET",
-  "/api/auth/r-auth/claim-proof",
-  Effect.gen(function* () {
-    const serverAuth = yield* ServerAuth;
-    const serverEnvironment = yield* ServerEnvironment;
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const session = yield* serverAuth.authenticateHttpRequest(request);
-    if (session.role !== "owner") {
-      return yield* new AuthError({
-        message: "Only owner sessions can issue claim proofs.",
-        status: 403,
-      });
-    }
-
-    const requestUrl = HttpServerRequest.toURL(request);
-    if (Option.isNone(requestUrl)) {
-      return yield* new AuthError({
-        message: "Unable to resolve request URL for claim proof.",
-        status: 400,
-      });
-    }
-
-    const descriptor = yield* serverEnvironment.getDescriptor;
-    const httpBaseUrl = new URL("/", requestUrl.value.origin).toString();
-    const wsBaseUrl = new URL(httpBaseUrl);
-    wsBaseUrl.protocol = wsBaseUrl.protocol === "https:" ? "wss:" : "ws:";
-    const result = yield* serverAuth.issueRAuthClaimProof({
-      environmentId: descriptor.environmentId,
-      label: descriptor.label,
-      httpBaseUrl,
-      wsBaseUrl: wsBaseUrl.toString(),
-    });
-    return HttpServerResponse.jsonUnsafe(result satisfies RAuthClaimProof, { status: 200 });
-  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
-);
-
-export const authRAuthGrantRouteLayer = HttpRouter.add(
-  "POST",
-  "/api/auth/r-auth/grants",
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* ServerAuth;
-    const config = yield* ServerConfig;
-    const payload = yield* HttpServerRequest.schemaBodyJson(RAuthGrantRequest).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AuthError({
-            message: "Invalid r-auth grant request payload.",
-            status: 400,
-            cause,
-          }),
-      ),
-    );
-    const session = yield* serverAuth.authenticateHttpRequest(request);
-    if (!config.rAuthEnabled || !config.rAuthIssuer || !config.rAuthGrantSharedSecret) {
-      return yield* new AuthError({
-        message: "Centralized auth is disabled on this server.",
-        status: 503,
-      });
-    }
-
-    const now = yield* DateTime.now;
-    const issuedAt = now;
-    const expiresAt = DateTime.add(now, { minutes: 15 });
-    const credential = issueRAuthGrantCredential({
-      issuer: config.rAuthIssuer,
-      audience: payload.environmentId,
-      subject: session.subject,
-      role: session.role,
-      issuedAt,
-      expiresAt,
-      secret: Buffer.from(config.rAuthGrantSharedSecret, "utf8"),
-    });
-    return HttpServerResponse.jsonUnsafe(
-      {
-        credential,
-        expiresAt: DateTime.toUtc(expiresAt),
-      } satisfies RAuthGrantCredentialResult,
-      { status: 200 },
-    );
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
 
