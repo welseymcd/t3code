@@ -176,23 +176,13 @@ function focusFileViewerWindow(request: Omit<FileViewerRequest, "id">): void {
     return;
   }
 
-  fileViewerWindowRef =
-    fileViewerWindowRef && !fileViewerWindowRef.closed
-      ? fileViewerWindowRef
-      : (window.open(
-          "",
-          FILE_VIEWER_WINDOW_NAME,
-          "popup=yes,width=1280,height=860,noopener=false,noreferrer=false",
-        ) ?? null);
-
-  if (!fileViewerWindowRef) return;
-
-  try {
-    if (fileViewerWindowRef.location.href === "about:blank") {
-      fileViewerWindowRef.location.href = url;
-    }
-  } catch {
-    fileViewerWindowRef.location.href = url;
+  if (!fileViewerWindowRef || fileViewerWindowRef.closed) {
+    fileViewerWindowRef =
+      window.open(
+        url,
+        FILE_VIEWER_WINDOW_NAME,
+        "popup=yes,width=1280,height=860,noopener=false,noreferrer=false",
+      ) ?? null;
   }
 
   fileViewerWindowRef?.focus();
