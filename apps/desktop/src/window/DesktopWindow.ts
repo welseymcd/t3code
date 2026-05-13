@@ -133,7 +133,10 @@ function isInternalFileViewerUrl(rawUrl: string, allowedOrigins: ReadonlySet<str
     if (url.protocol === "file:") {
       return url.hash.startsWith("#/file-viewer");
     }
-    return allowedOrigins.has(url.origin) && url.pathname === "/file-viewer";
+    if (!allowedOrigins.has(url.origin)) {
+      return false;
+    }
+    return url.pathname === "/file-viewer" || url.hash.startsWith("#/file-viewer");
   } catch {
     return false;
   }

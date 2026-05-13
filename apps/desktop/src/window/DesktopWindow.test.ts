@@ -206,6 +206,33 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("allows hash-routed internal file viewer popup windows", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady;
+
+        const handler = fakeWindow.setWindowOpenHandler.mock.calls[0]?.[0];
+        assert.isFunction(handler);
+
+        const result = handler({
+          url: "http://127.0.0.1:5733/#/file-viewer?path=README.md",
+        } as Electron.HandlerDetails);
+
+        assert.equal(result.action, "allow");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("continues denying unrelated internal popup windows", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
