@@ -276,42 +276,44 @@ export function FileViewerWindow() {
         </div>
       </header>
 
-      <div className="flex h-10 shrink-0 items-end gap-1 overflow-x-auto border-b border-border/70 bg-muted/30 px-2 pt-1">
-        {tabs.map((tab) => {
-          const active = tab.id === activeTab?.id;
-          return (
-            <div
-              key={tab.id}
-              className={cn(
-                "group flex h-8 min-w-32 max-w-56 items-center gap-2 rounded-t-md border border-b-0 px-2 text-left text-[12px]",
-                active
-                  ? "border-border bg-background text-foreground"
-                  : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
-              )}
-              title={tab.relativePath}
-            >
-              <button
-                type="button"
-                className="min-w-0 flex-1 truncate text-left font-mono"
-                onClick={() => activateFileViewerTab(tab.id)}
+      {tabs.length > 0 ? (
+        <div className="flex h-10 shrink-0 items-end gap-1 overflow-x-auto border-b border-border/70 bg-muted/30 px-2 pt-1">
+          {tabs.map((tab) => {
+            const active = tab.id === activeTab?.id;
+            return (
+              <div
+                key={tab.id}
+                className={cn(
+                  "group flex h-8 min-w-32 max-w-56 items-center gap-2 rounded-t-md border border-b-0 px-2 text-left text-[12px]",
+                  active
+                    ? "border-border bg-background text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                )}
+                title={tab.relativePath}
               >
-                {basenameOf(tab.relativePath)}
-              </button>
-              <button
-                type="button"
-                aria-label={`Close ${tab.relativePath}`}
-                className="shrink-0 rounded-sm p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeFileViewerTab(tab.id);
-                }}
-              >
-                <XIcon className="size-3" />
-              </button>
-            </div>
-          );
-        })}
-      </div>
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 truncate text-left font-mono"
+                  onClick={() => activateFileViewerTab(tab.id)}
+                >
+                  {basenameOf(tab.relativePath)}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Close ${tab.relativePath}`}
+                  className="shrink-0 rounded-sm p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeFileViewerTab(tab.id);
+                  }}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       {activeTab ? (
         <>
