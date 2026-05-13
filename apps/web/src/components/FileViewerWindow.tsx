@@ -20,6 +20,7 @@ import {
   useFileViewerTabs,
 } from "../fileViewerState";
 import { ensureEnvironmentApi } from "../environmentApi";
+import { isElectron } from "../env";
 import { projectQueryKeys, projectReadFileQueryOptions } from "../lib/projectReactQuery";
 import { cn } from "../lib/utils";
 import ChatMarkdown from "./ChatMarkdown";
@@ -224,12 +225,19 @@ export function FileViewerWindow() {
 
   return (
     <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3">
+      <header
+        className={cn(
+          "flex shrink-0 items-center justify-between gap-3 border-b border-border/70",
+          isElectron
+            ? "drag-region h-[52px] pl-[90px] pr-3 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+            : "h-11 px-3",
+        )}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <FileIcon className="size-4 shrink-0 text-muted-foreground/70" />
           <span className="truncate text-sm font-medium">Files</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="no-drag-region flex items-center gap-2">
           {isMarkdown ? (
             <div className="flex items-center gap-1">
               <Button
