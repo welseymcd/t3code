@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { ServerConfig } from "../../config.ts";
+import { PROJECT_READ_FILE_MAX_BYTES_LIMIT } from "@t3tools/contracts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
@@ -54,6 +55,101 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 });
 
 it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
+  describe("readFile", () => {
+    it.effect("reads UTF-8 text files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "README.md", "# Hello\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "README.md",
+        });
+
+        expect(result).toEqual({
+          relativePath: "README.md",
+          absolutePath: path.join(cwd, "README.md"),
+          content: "# Hello\n",
+          sizeBytes: 8,
+          truncated: false,
+          isBinary: false,
+        });
+      }),
+    );
+
+    it.effect("reports truncation for files larger than the read limit", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "large.txt", "a".repeat(PROJECT_READ_FILE_MAX_BYTES_LIMIT + 2));
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "large.txt",
+        });
+
+        expect(result.content).toHaveLength(PROJECT_READ_FILE_MAX_BYTES_LIMIT);
+        expect(result.sizeBytes).toBe(PROJECT_READ_FILE_MAX_BYTES_LIMIT + 2);
+        expect(result.truncated).toBe(true);
+        expect(result.isBinary).toBe(false);
+      }),
+    );
+
+    it.effect("detects null-byte binary files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.writeFile(path.join(cwd, "image.bin"), new Uint8Array([1, 0, 2]));
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "image.bin",
+        });
+
+        expect(result.content).toBe("");
+        expect(result.isBinary).toBe(true);
+      }),
+    );
+
+    it.effect("detects invalid UTF-8 files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.writeFile(path.join(cwd, "invalid.txt"), new Uint8Array([0xff]));
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "invalid.txt",
+        });
+
+        expect(result.content).toBe("");
+        expect(result.isBinary).toBe(true);
+      }),
+    );
+
+    it.effect("rejects reads outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "../escape.md",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("Workspace file path must be relative");
+      }),
+    );
+  });
+
   describe("writeFile", () => {
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {

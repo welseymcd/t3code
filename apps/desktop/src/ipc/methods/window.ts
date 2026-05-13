@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
@@ -131,5 +132,15 @@ export const openExternal = makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const focusFileViewerWindow = makeIpcMethod({
+  channel: IpcChannels.FOCUS_FILE_VIEWER_WINDOW_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.focusFileViewerWindow")(function* () {
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.focusFileViewerWindow;
   }),
 });

@@ -419,6 +419,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         <ChatMarkdown
           text={messageText}
           cwd={ctx.markdownCwd}
+          environmentId={ctx.activeThreadEnvironmentId}
+          workspaceRoot={ctx.workspaceRoot}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
         />

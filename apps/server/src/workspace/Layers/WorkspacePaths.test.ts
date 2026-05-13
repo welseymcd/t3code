@@ -130,5 +130,24 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
         );
       }),
     );
+
+    it.effect("rejects empty, current-directory, parent-directory, and absolute paths", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths;
+        const cwd = yield* makeTempDir();
+        const path = yield* Path.Path;
+
+        for (const relativePath of ["", ".", "..", path.join(cwd, "README.md")]) {
+          const error = yield* workspacePaths
+            .resolveRelativePathWithinRoot({
+              workspaceRoot: cwd,
+              relativePath,
+            })
+            .pipe(Effect.flip);
+
+          expect(error.message).toContain("Workspace file path must be relative");
+        }
+      }),
+    );
   });
 });

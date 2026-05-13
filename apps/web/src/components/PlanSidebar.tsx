@@ -256,6 +256,8 @@ const PlanSidebar = memo(function PlanSidebar({
                   <ChatMarkdown
                     text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}
+                    environmentId={environmentId}
+                    workspaceRoot={workspaceRoot}
                     isStreaming={false}
                   />
                 </div>

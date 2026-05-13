@@ -225,6 +225,7 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     setTheme: async () => undefined,
     showContextMenu: async () => null,
     openExternal: async () => true,
+    focusFileViewerWindow: async () => undefined,
     onMenuAction: () => () => undefined,
     getUpdateState: async () => {
       throw new Error("getUpdateState not implemented in test");
@@ -615,6 +616,7 @@ describe("wsApi", () => {
       sidebarThreadSortOrder: "created_at" as const,
       sidebarThreadPreviewCount: 6,
       timestampFormat: "24-hour" as const,
+      workspaceFileOpenMode: "external" as const,
     };
     const getClientSettings = vi.fn().mockResolvedValue({
       ...clientSettings,
@@ -678,6 +680,7 @@ describe("wsApi", () => {
       sidebarThreadSortOrder: "created_at" as const,
       sidebarThreadPreviewCount: 6,
       timestampFormat: "24-hour" as const,
+      workspaceFileOpenMode: "external" as const,
     };
 
     await api.persistence.setClientSettings(clientSettings);

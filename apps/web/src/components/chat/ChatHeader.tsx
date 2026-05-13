@@ -9,7 +9,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, FolderIcon, FolderOpenIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -32,6 +32,8 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   terminalAvailable: boolean;
   terminalOpen: boolean;
+  fileExplorerAvailable: boolean;
+  fileExplorerOpen: boolean;
   terminalToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
@@ -41,6 +43,7 @@ interface ChatHeaderProps {
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
+  onToggleFileExplorer: () => void;
   onToggleDiff: () => void;
 }
 
@@ -70,6 +73,8 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   terminalAvailable,
   terminalOpen,
+  fileExplorerAvailable,
+  fileExplorerOpen,
   terminalToggleShortcutLabel,
   diffToggleShortcutLabel,
   gitCwd,
@@ -79,6 +84,7 @@ export const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleTerminal,
+  onToggleFileExplorer,
   onToggleDiff,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -157,6 +163,32 @@ export const ChatHeader = memo(function ChatHeader({
               : terminalToggleShortcutLabel
                 ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
                 : "Toggle terminal drawer"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={fileExplorerOpen}
+                onPressedChange={onToggleFileExplorer}
+                aria-label="Toggle file explorer"
+                variant="outline"
+                size="xs"
+                disabled={!fileExplorerAvailable}
+              >
+                {fileExplorerOpen ? (
+                  <FolderOpenIcon className="size-3" />
+                ) : (
+                  <FolderIcon className="size-3" />
+                )}
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {!fileExplorerAvailable
+              ? "File explorer is unavailable until this thread has an active workspace."
+              : "Toggle file explorer"}
           </TooltipPopup>
         </Tooltip>
         <Tooltip>
