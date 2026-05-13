@@ -184,6 +184,9 @@ function focusFileViewerWindow(request: Omit<FileViewerRequest, "id">): void {
     ) ?? fileViewerWindowRef;
 
   fileViewerWindowRef?.focus();
+  window.setTimeout(() => {
+    void window.desktopBridge?.focusFileViewerWindow();
+  }, 0);
 }
 
 export function resolveFileViewerRequest(

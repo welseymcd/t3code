@@ -58,6 +58,7 @@ export interface DesktopWindowShape {
   readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
   readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
   readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+  readonly focusFileViewerWindow: Effect.Effect<void>;
   readonly syncAppearance: Effect.Effect<void>;
 }
 
@@ -170,6 +171,7 @@ const make = Effect.gen(function* () {
   const state = yield* DesktopState.DesktopState;
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
+  let fileViewerWindow: Electron.BrowserWindow | null = null;
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
     backendHttpUrl: URL,
@@ -278,6 +280,18 @@ const make = Effect.gen(function* () {
         void runPromise(electronShell.openExternal(url));
       }
       return { action: "deny" };
+    });
+    window.webContents.on("did-create-window", (createdWindow, details) => {
+      if (!isInternalFileViewerUrl(details.url, allowedAppOrigins)) {
+        return;
+      }
+      fileViewerWindow = createdWindow;
+      createdWindow.on("closed", () => {
+        if (fileViewerWindow === createdWindow) {
+          fileViewerWindow = null;
+        }
+      });
+      void runPromise(electronWindow.reveal(createdWindow));
     });
 
     window.on("page-title-updated", (event) => {
@@ -400,6 +414,13 @@ const make = Effect.gen(function* () {
 
       send();
     }),
+    focusFileViewerWindow: Effect.gen(function* () {
+      if (!fileViewerWindow || fileViewerWindow.isDestroyed()) {
+        fileViewerWindow = null;
+        return;
+      }
+      yield* electronWindow.reveal(fileViewerWindow);
+    }).pipe(Effect.withSpan("desktop.window.focusFileViewerWindow")),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       yield* electronWindow.syncAllAppearance((window) =>

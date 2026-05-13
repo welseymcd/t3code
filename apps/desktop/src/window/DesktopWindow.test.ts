@@ -63,8 +63,27 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     loadURL: window.loadURL,
     openDevTools: webContents.openDevTools,
+    reveal: {
+      focus: window.focus,
+      restore: window.restore,
+      show: window.show,
+    },
     setWindowOpenHandler: webContents.setWindowOpenHandler,
+    webContentsOn: webContents.on,
   };
+}
+
+function makeFakeChildWindow() {
+  const window = {
+    focus: vi.fn(),
+    isDestroyed: vi.fn(() => false),
+    isMinimized: vi.fn(() => false),
+    isVisible: vi.fn(() => true),
+    on: vi.fn(),
+    restore: vi.fn(),
+    show: vi.fn(),
+  };
+  return window as unknown as Electron.BrowserWindow;
 }
 
 const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
@@ -132,7 +151,7 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (window) => Effect.sync(() => window.focus()),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
@@ -229,6 +248,38 @@ describe("DesktopWindow", () => {
         } as Electron.HandlerDetails);
 
         assert.equal(result.action, "allow");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("tracks and focuses the file viewer popup window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const childWindow = makeFakeChildWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady;
+
+        const didCreateWindowHandler = fakeWindow.webContentsOn.mock.calls.find(
+          ([eventName]) => eventName === "did-create-window",
+        )?.[1];
+        assert.isFunction(didCreateWindowHandler);
+
+        didCreateWindowHandler(childWindow, {
+          url: "http://127.0.0.1:5733/#/file-viewer?path=README.md",
+        } as Electron.DidCreateWindowDetails);
+
+        yield* desktopWindow.focusFileViewerWindow;
+
+        assert.equal((childWindow.focus as ReturnType<typeof vi.fn>).mock.calls.length, 2);
       }).pipe(Effect.provide(layer));
     }),
   );
