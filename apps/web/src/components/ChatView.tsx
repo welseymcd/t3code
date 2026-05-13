@@ -186,7 +186,6 @@ import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { FileExplorerSidebar } from "./FileExplorerSidebar";
-import { FileViewerDialog } from "./FileViewerDialog";
 import { Button } from "./ui/button";
 import {
   buildVersionMismatchDismissalKey,
@@ -3812,7 +3811,6 @@ export default function ChatView(props: ChatViewProps) {
       {expandedImage && (
         <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />
       )}
-      <FileViewerDialog />
     </div>
   );
 }
