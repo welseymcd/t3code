@@ -127,6 +127,18 @@ function syncWindowAppearance(
   });
 }
 
+function isInternalFileViewerUrl(rawUrl: string, allowedOrigins: ReadonlySet<string>): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "file:") {
+      return url.hash.startsWith("#/file-viewer");
+    }
+    return allowedOrigins.has(url.origin) && url.pathname === "/file-viewer";
+  } catch {
+    return false;
+  }
+}
+
 type RevealSubscription = (listener: () => void) => void;
 
 function bindFirstRevealTrigger(
@@ -162,6 +174,12 @@ const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const allowedAppOrigins = new Set<string>([backendHttpUrl.origin]);
+    if (Option.isSome(environment.devServerUrl)) {
+      allowedAppOrigins.add(environment.devServerUrl.value.origin);
+    }
+    const titleBarOptions = getWindowTitleBarOptions(shouldUseDarkColors);
+    const backgroundColor = getInitialWindowBackgroundColor(shouldUseDarkColors);
     const window = yield* electronWindow.create({
       width: 1100,
       height: 780,
@@ -169,10 +187,10 @@ const make = Effect.gen(function* () {
       minHeight: 620,
       show: false,
       autoHideMenuBar: true,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor,
       ...iconOption,
       title: environment.displayName,
-      ...getWindowTitleBarOptions(shouldUseDarkColors),
+      ...titleBarOptions,
       webPreferences: {
         preload: environment.preloadPath,
         contextIsolation: true,
@@ -230,6 +248,29 @@ const make = Effect.gen(function* () {
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
+      if (isInternalFileViewerUrl(url, allowedAppOrigins)) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            width: 1280,
+            height: 860,
+            minWidth: 720,
+            minHeight: 480,
+            autoHideMenuBar: true,
+            backgroundColor,
+            ...iconOption,
+            title: environment.displayName,
+            ...titleBarOptions,
+            webPreferences: {
+              preload: environment.preloadPath,
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+            },
+          },
+        };
+      }
+
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
