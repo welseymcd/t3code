@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const PROJECT_LIST_DIRECTORY_MAX_LIMIT = 1000;

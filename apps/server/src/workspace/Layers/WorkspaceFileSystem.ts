@@ -1,6 +1,8 @@
-import fsPromises from "node:fs/promises";
-
-import { Effect, FileSystem, Layer, Path } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import { PROJECT_READ_FILE_MAX_BYTES_LIMIT } from "@t3tools/contracts";
 import {
@@ -53,26 +55,25 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
     readonly relativePath: string;
     readonly absolutePath: string;
   }): Effect.fn.Return<Uint8Array, WorkspaceFileSystemError> {
-    return yield* Effect.tryPromise({
-      try: async () => {
-        const handle = await fsPromises.open(input.absolutePath, "r");
-        try {
-          const buffer = Buffer.alloc(PROJECT_READ_FILE_MAX_BYTES_LIMIT + 1);
-          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0);
-          return buffer.subarray(0, bytesRead);
-        } finally {
-          await handle.close();
-        }
-      },
-      catch: (cause) =>
-        new WorkspaceFileSystemError({
-          cwd: input.cwd,
-          relativePath: input.relativePath,
-          operation: "workspaceFileSystem.readFile",
-          detail: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
-    });
+    const chunks = yield* fileSystem
+      .stream(input.absolutePath, {
+        bytesToRead: PROJECT_READ_FILE_MAX_BYTES_LIMIT + 1,
+        chunkSize: PROJECT_READ_FILE_MAX_BYTES_LIMIT + 1,
+      })
+      .pipe(
+        Stream.runCollect,
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceFileSystemError({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              operation: "workspaceFileSystem.readFile",
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      );
+    return Buffer.concat(Array.from(chunks));
   });
 
   const readFile: WorkspaceFileSystemShape["readFile"] = Effect.fn("WorkspaceFileSystem.readFile")(
@@ -83,19 +84,20 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
         relativePath: input.relativePath,
       });
 
-      const stat = yield* Effect.tryPromise({
-        try: () => fsPromises.stat(target.absolutePath),
-        catch: (cause) =>
-          new WorkspaceFileSystemError({
-            cwd: input.cwd,
-            relativePath: input.relativePath,
-            operation: "workspaceFileSystem.stat",
-            detail: cause instanceof Error ? cause.message : String(cause),
-            cause,
-          }),
-      });
+      const stat = yield* fileSystem.stat(target.absolutePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceFileSystemError({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              operation: "workspaceFileSystem.stat",
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      );
 
-      if (!stat.isFile()) {
+      if (stat.type !== "File") {
         return yield* new WorkspaceFileSystemError({
           cwd: input.cwd,
           relativePath: input.relativePath,
@@ -109,8 +111,9 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
         relativePath: input.relativePath,
         absolutePath: target.absolutePath,
       });
+      const sizeBytes = Number(stat.size);
       const truncated =
-        stat.size > PROJECT_READ_FILE_MAX_BYTES_LIMIT ||
+        sizeBytes > PROJECT_READ_FILE_MAX_BYTES_LIMIT ||
         bytes.length > PROJECT_READ_FILE_MAX_BYTES_LIMIT;
       const readableBytes = bytes.subarray(0, PROJECT_READ_FILE_MAX_BYTES_LIMIT);
       const decoded = decodeTextFile(readableBytes);
@@ -119,7 +122,7 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
         relativePath: target.relativePath,
         absolutePath: target.absolutePath,
         content: decoded.isBinary ? "" : decoded.content,
-        sizeBytes: stat.size,
+        sizeBytes,
         truncated,
         isBinary: decoded.isBinary,
       };
