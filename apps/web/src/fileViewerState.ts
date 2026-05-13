@@ -176,14 +176,12 @@ function focusFileViewerWindow(request: Omit<FileViewerRequest, "id">): void {
     return;
   }
 
-  if (!fileViewerWindowRef || fileViewerWindowRef.closed) {
-    fileViewerWindowRef =
-      window.open(
-        url,
-        FILE_VIEWER_WINDOW_NAME,
-        "popup=yes,width=1280,height=860,noopener=false,noreferrer=false",
-      ) ?? null;
-  }
+  fileViewerWindowRef =
+    window.open(
+      url,
+      FILE_VIEWER_WINDOW_NAME,
+      "popup=yes,width=1280,height=860,noopener=false,noreferrer=false",
+    ) ?? fileViewerWindowRef;
 
   fileViewerWindowRef?.focus();
 }
