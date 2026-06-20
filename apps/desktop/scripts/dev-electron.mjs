@@ -1,4 +1,5 @@
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -33,6 +34,8 @@ const watchedDirectories = [
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
+const staleSupervisorGracePeriodMs = 2_000;
+const parentExitPollMs = 1_000;
 const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
@@ -52,12 +55,115 @@ if (devProtocolClient) {
   childEnv.T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
 }
 
+const lockPath = NodePath.join(
+  NodeOS.tmpdir(),
+  `t3code-dev-electron-${NodeCrypto.createHash("sha256").update(desktopDir).digest("hex").slice(0, 16)}.lock`,
+);
+const initialParentPid = process.ppid;
+
 let shuttingDown = false;
 let restartTimer = null;
 let currentApp = null;
 let restartQueue = Promise.resolve();
+let lockHandle = null;
+let parentExitTimer = null;
 const expectedExits = new WeakSet();
 const watchers = [];
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readLockPid() {
+  try {
+    const raw = NodeFS.readFileSync(lockPath, "utf8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (!isProcessAlive(pid)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isProcessAlive(pid);
+}
+
+async function terminateExistingSupervisor(pid) {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  if (await waitForProcessExit(pid, staleSupervisorGracePeriodMs)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // The process may have exited between the timeout and kill attempt.
+  }
+}
+
+async function acquireSingletonLock() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      lockHandle = NodeFS.openSync(lockPath, "wx");
+      NodeFS.writeFileSync(lockHandle, `${process.pid}\n`);
+      return;
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+
+      const existingPid = readLockPid();
+      if (existingPid === undefined || !isProcessAlive(existingPid)) {
+        NodeFS.rmSync(lockPath, { force: true });
+        continue;
+      }
+
+      console.warn(
+        `[t3 desktop dev] Existing Electron dev supervisor detected (${existingPid}); replacing it.`,
+      );
+      await terminateExistingSupervisor(existingPid);
+      NodeFS.rmSync(lockPath, { force: true });
+    }
+  }
+
+  throw new Error(`Failed to acquire Electron dev supervisor lock: ${lockPath}`);
+}
+
+function releaseSingletonLock() {
+  if (lockHandle !== null) {
+    try {
+      NodeFS.closeSync(lockHandle);
+    } catch {
+      // Ignore close errors during process shutdown.
+    }
+    lockHandle = null;
+  }
+
+  if (readLockPid() === process.pid) {
+    NodeFS.rmSync(lockPath, { force: true });
+  }
+}
 
 function killChildTreeByPid(pid, signal) {
   if (hostPlatform === "win32" || typeof pid !== "number") {
@@ -213,6 +319,11 @@ async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
 
+  if (parentExitTimer) {
+    clearInterval(parentExitTimer);
+    parentExitTimer = null;
+  }
+
   if (restartTimer) {
     clearTimeout(restartTimer);
     restartTimer = null;
@@ -228,9 +339,18 @@ async function shutdown(exitCode) {
     setTimeout(resolve, childTreeGracePeriodMs);
   });
   killChildTree("KILL");
+  releaseSingletonLock();
 
   process.exit(exitCode);
 }
+
+await acquireSingletonLock();
+parentExitTimer = setInterval(() => {
+  if (initialParentPid > 1 && process.ppid === 1) {
+    void shutdown(0);
+  }
+}, parentExitPollMs);
+parentExitTimer.unref();
 
 startWatchers();
 cleanupStaleDevApps();
@@ -244,4 +364,7 @@ process.once("SIGTERM", () => {
 });
 process.once("SIGHUP", () => {
   void shutdown(129);
+});
+process.once("exit", () => {
+  releaseSingletonLock();
 });
