@@ -318,13 +318,34 @@ export const PiAgentSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
       }),
     ),
+    systemPrompt: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "System prompt",
+        description:
+          "Optional Pi system prompt text. By default this is appended to Pi's built-in prompt.",
+        providerSettingsForm: {
+          control: "textarea",
+          placeholder: "Extra instructions for Pi...",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    replaceSystemPrompt: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Replace default system prompt",
+        description: "Replace Pi's built-in prompt instead of appending these instructions.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath"],
+    order: ["binaryPath", "systemPrompt", "replaceSystemPrompt"],
   },
 );
 export type PiAgentSettings = typeof PiAgentSettings.Type;
@@ -508,6 +529,8 @@ const OpenCodeSettingsPatch = Schema.Struct({
 const PiAgentSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
+  systemPrompt: Schema.optionalKey(TrimmedString),
+  replaceSystemPrompt: Schema.optionalKey(Schema.Boolean),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 

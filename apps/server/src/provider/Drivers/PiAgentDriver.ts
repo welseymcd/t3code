@@ -565,7 +565,14 @@ function makePiAdapter(input: {
       Effect.gen(function* () {
         const args = ["--mode", "rpc"];
         const sessionDir = piSessionDirFromEnv(input.env);
+        const systemPrompt = input.settings.systemPrompt.trim();
         if (sessionDir !== undefined) args.push("--session-dir", sessionDir);
+        if (systemPrompt.length > 0) {
+          args.push(
+            input.settings.replaceSystemPrompt ? "--system-prompt" : "--append-system-prompt",
+            systemPrompt,
+          );
+        }
         if (model !== undefined) args.push("--model", model);
         const command = yield* resolveSpawnCommand(input.settings.binaryPath || "pi", args, {
           env: input.env,
