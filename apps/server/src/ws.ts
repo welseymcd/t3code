@@ -34,6 +34,9 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  type ProjectEntriesFailure,
+  type ProjectFileFailure,
+  type ProjectFileOperation,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchEntriesError,
@@ -41,8 +44,10 @@ import {
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
+  type FilesystemBrowseFailure,
   FilesystemBrowseError,
-  AssetAccessError,
+  AssetWorkspaceContextNotFoundError,
+  AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -108,17 +113,11 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
-const isWorkspacePathOutsideRootError = Schema.is(WorkspacePaths.WorkspacePathOutsideRootError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
-}
-
-/** Preserve pre-structured-error display behavior at the RPC boundary. */
-function legacyPlatformFailureDescription(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /** Preserve the setup runner's broader pre-refactor message normalization. */
@@ -134,37 +133,105 @@ function legacySetupFailureDescription(cause: unknown): string {
   return String(cause);
 }
 
-function workspaceEntriesCompatibilityDetail(
-  error: WorkspaceEntries.WorkspaceEntriesError,
-): string {
+function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
+  readonly failure: ProjectEntriesFailure;
+  readonly normalizedCwd?: string;
+  readonly timeout?: string;
+  readonly detail?: string;
+} {
   switch (error._tag) {
     case "WorkspaceRootNotExistsError":
-      return `Workspace root does not exist: ${error.normalizedWorkspaceRoot}`;
+      return {
+        failure: "workspace_root_not_found",
+        normalizedCwd: error.normalizedWorkspaceRoot,
+      };
     case "WorkspaceRootCreateFailedError":
-      return `Failed to create workspace root: ${error.normalizedWorkspaceRoot}`;
+      return {
+        failure: "workspace_root_create_failed",
+        normalizedCwd: error.normalizedWorkspaceRoot,
+      };
+    case "WorkspaceRootStatFailedError":
+      return {
+        failure: "workspace_root_stat_failed",
+        normalizedCwd: error.normalizedWorkspaceRoot,
+        detail: error.phase,
+      };
     case "WorkspaceRootNotDirectoryError":
-      return `Workspace root is not a directory: ${error.normalizedWorkspaceRoot}`;
+      return {
+        failure: "workspace_root_not_directory",
+        normalizedCwd: error.normalizedWorkspaceRoot,
+      };
     case "WorkspaceSearchIndexCreateFailed":
-      return `Failed to create the workspace search index for '${error.cwd}': ${error.reason}`;
+      return {
+        failure: "search_index_create_failed",
+        normalizedCwd: error.cwd,
+        detail: error.reason,
+      };
     case "WorkspaceSearchIndexScanTimedOut":
-      return `Workspace search index for '${error.cwd}' did not finish scanning within ${error.timeout}`;
+      return {
+        failure: "search_index_scan_timed_out",
+        normalizedCwd: error.cwd,
+        timeout: error.timeout,
+      };
     case "WorkspaceSearchIndexSearchFailed":
-      return `Workspace search failed for '${error.cwd}': ${error.reason}`;
+      return {
+        failure: "search_index_search_failed",
+        normalizedCwd: error.cwd,
+        detail: error.reason,
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
 }
 
-function workspaceBrowseCompatibilityDetail(
-  error: WorkspaceEntries.WorkspaceEntriesBrowseError,
-): string {
+function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntriesBrowseError): {
+  readonly failure: FilesystemBrowseFailure;
+  readonly parentPath?: string;
+  readonly platform?: string;
+} {
   switch (error._tag) {
     case "WorkspaceEntriesWindowsPathUnsupportedError":
-      return "Windows-style paths are only supported on Windows.";
+      return { failure: "windows_path_unsupported", platform: error.platform };
     case "WorkspaceEntriesCurrentProjectRequiredError":
-      return "Relative filesystem browse paths require a current project.";
+      return { failure: "current_project_required" };
     case "WorkspaceEntriesReadDirectoryError":
-      return `Unable to browse '${error.parentPath}': ${legacyPlatformFailureDescription(error.cause)}`;
+      return { failure: "read_directory_failed", parentPath: error.parentPath };
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function projectFileFailureContext(
+  error:
+    | WorkspaceFileSystem.WorkspaceFileSystemError
+    | WorkspacePaths.WorkspacePathOutsideRootError,
+): {
+  readonly failure: ProjectFileFailure;
+  readonly resolvedPath?: string;
+  readonly resolvedWorkspaceRoot?: string;
+  readonly operation?: ProjectFileOperation;
+  readonly operationPath?: string;
+} {
+  switch (error._tag) {
+    case "WorkspacePathOutsideRootError":
+      return { failure: "workspace_path_outside_root" };
+    case "WorkspaceFileSystemOperationError":
+      return {
+        failure: "operation_failed",
+        resolvedPath: error.resolvedPath,
+        operation: error.operation,
+        operationPath: error.operationPath,
+      };
+    case "WorkspaceFilePathEscapeError":
+      return {
+        failure: "resolved_path_outside_root",
+        resolvedPath: error.resolvedPath,
+        resolvedWorkspaceRoot: error.resolvedWorkspaceRoot,
+      };
+    case "WorkspacePathNotFileError":
+      return { failure: "path_not_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceBinaryFileError":
+      return { failure: "binary_file", resolvedPath: error.resolvedPath };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -263,14 +330,14 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeTerminalMetadata, AuthTerminalOperateScope],
   [WS_METHODS.previewOpen, AuthOrchestrationOperateScope],
   [WS_METHODS.previewNavigate, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewResize, AuthOrchestrationOperateScope],
   [WS_METHODS.previewRefresh, AuthOrchestrationOperateScope],
   [WS_METHODS.previewClose, AuthOrchestrationOperateScope],
   [WS_METHODS.previewList, AuthOrchestrationReadScope],
   [WS_METHODS.previewReportStatus, AuthOrchestrationOperateScope],
   [WS_METHODS.previewAutomationConnect, AuthOrchestrationOperateScope],
   [WS_METHODS.previewAutomationRespond, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewAutomationReportOwner, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewAutomationClearOwner, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationFocusHost, AuthOrchestrationOperateScope],
   [WS_METHODS.subscribePreviewEvents, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeDiscoveredLocalServers, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
@@ -318,7 +385,10 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+const makeWsRpcLayer = (
+  currentSession: EnvironmentAuth.AuthenticatedSession,
+  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
@@ -333,7 +403,6 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
-      const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1260,7 +1329,10 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
-                    message: `Failed to search workspace entries: ${workspaceEntriesCompatibilityDetail(cause)}`,
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
                     cause,
                   }),
               ),
@@ -1274,7 +1346,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectListEntriesError({
-                    message: `Failed to list workspace entries: ${workspaceEntriesCompatibilityDetail(cause)}`,
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
                     cause,
                   }),
               ),
@@ -1285,12 +1358,14 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
             workspaceFileSystem.readFile(input).pipe(
-              Effect.mapError((cause) => {
-                const message = isWorkspacePathOutsideRootError(cause)
-                  ? "Workspace file path must stay within the project root."
-                  : `Failed to read workspace file: ${legacyPlatformFailureDescription(cause.cause)}`;
-                return new ProjectReadFileError({ message, cause });
-              }),
+              Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
             { "rpc.aggregate": "workspace" },
           ),
@@ -1298,15 +1373,15 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
             workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError((cause) => {
-                const message = isWorkspacePathOutsideRootError(cause)
-                  ? "Workspace file path must stay within the project root."
-                  : "Failed to write workspace file";
-                return new ProjectWriteFileError({
-                  message,
-                  cause,
-                });
-              }),
+              Effect.mapError(
+                (cause) =>
+                  new ProjectWriteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
             { "rpc.aggregate": "workspace" },
           ),
@@ -1321,7 +1396,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new FilesystemBrowseError({
-                    message: workspaceBrowseCompatibilityDetail(cause),
+                    ...input,
+                    ...filesystemBrowseFailureContext(cause),
                     cause,
                   }),
               ),
@@ -1340,15 +1416,15 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 .pipe(
                   Effect.mapError(
                     (cause) =>
-                      new AssetAccessError({
-                        message: "Failed to resolve workspace context.",
+                      new AssetWorkspaceContextResolutionError({
+                        resource: input.resource,
                         cause,
                       }),
                   ),
                 );
               if (Option.isNone(thread)) {
-                return yield* new AssetAccessError({
-                  message: "Workspace context was not found.",
+                return yield* new AssetWorkspaceContextNotFoundError({
+                  resource: input.resource,
                 });
               }
               const project = yield* projectionSnapshotQuery
@@ -1356,15 +1432,15 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 .pipe(
                   Effect.mapError(
                     (cause) =>
-                      new AssetAccessError({
-                        message: "Failed to resolve workspace context.",
+                      new AssetWorkspaceContextResolutionError({
+                        resource: input.resource,
                         cause,
                       }),
                   ),
                 );
               if (Option.isNone(project)) {
-                return yield* new AssetAccessError({
-                  message: "Workspace context was not found.",
+                return yield* new AssetWorkspaceContextNotFoundError({
+                  resource: input.resource,
                 });
               }
               return yield* issueAssetUrl({
@@ -1548,6 +1624,10 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewResize]: (input) =>
+          observeRpcEffect(WS_METHODS.previewResize, previewManager.resize(input), {
+            "rpc.aggregate": "preview",
+          }),
         [WS_METHODS.previewRefresh]: (input) =>
           observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
             "rpc.aggregate": "preview",
@@ -1576,16 +1656,10 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             previewAutomationBroker.respond(input),
             { "rpc.aggregate": "preview-automation" },
           ),
-        [WS_METHODS.previewAutomationReportOwner]: (input) =>
+        [WS_METHODS.previewAutomationFocusHost]: (input) =>
           observeRpcEffect(
-            WS_METHODS.previewAutomationReportOwner,
-            previewAutomationBroker.reportOwner(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationClearOwner]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationClearOwner,
-            previewAutomationBroker.clearOwner(input),
+            WS_METHODS.previewAutomationFocusHost,
+            previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
@@ -1717,8 +1791,9 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
   );
 
 export const websocketRpcRouteLayer = Layer.unwrap(
-  Effect.succeed(
-    HttpRouter.add(
+  Effect.gen(function* () {
+    const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    return HttpRouter.add(
       "GET",
       "/ws",
       Effect.gen(function* () {
@@ -1737,9 +1812,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
-              Layer.provide(PreviewAutomationBroker.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
@@ -1776,6 +1850,6 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           EnvironmentInternalError: HttpServerRespondable.toResponse,
         }),
       ),
-    ),
-  ),
+    );
+  }),
 );

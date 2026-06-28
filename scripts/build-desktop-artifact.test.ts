@@ -4,16 +4,22 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  BuildScriptError,
+  BuildCommandFailedError,
   createStageWorkspaceConfig,
   createStagePnpmConfig,
   createBuildConfig,
   DESKTOP_ASAR_UNPACK,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
+  InvalidMockUpdateServerPortError,
   isMacPasskeySigningConfigurationError,
+  LinuxIconResizeError,
+  MacPasskeySigningConfigurationResolutionError,
   MissingMacPasskeyProvisioningProfileError,
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
@@ -27,10 +33,48 @@ import {
   resolveGitHubPublishConfig,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
+  stageLinuxIconSize,
   STAGE_INSTALL_ARGS,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
+function mockProcess(exitCode: number) {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+}
+
+function iconResizeSpawnerLayer(
+  commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>,
+  exitCodes: ReadonlyArray<number>,
+) {
+  let commandIndex = 0;
+  return Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) => {
+      const childProcess = command as unknown as {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
+      commands.push({
+        command: childProcess.command,
+        args: childProcess.args,
+      });
+      return Effect.succeed(mockProcess(exitCodes[commandIndex++] ?? 0));
+    }),
+  );
+}
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("resolves the dedicated nightly updater channel from nightly versions", () => {
@@ -166,10 +210,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         cpu: ["x64"],
       },
     });
+    // Windows artifacts also bundle the same-architecture WSL (Linux, glibc) backend, so the
+    // staged install must fetch its native optional deps (e.g. ffi-rs) too.
+    assert.deepStrictEqual(createStageWorkspaceConfig("win", "x64"), {
+      supportedArchitectures: {
+        os: ["win32", "linux"],
+        cpu: ["x64"],
+        libc: ["glibc"],
+      },
+    });
     assert.deepStrictEqual(createStageWorkspaceConfig("win", "arm64"), {
       supportedArchitectures: {
-        os: ["win32"],
+        os: ["win32", "linux"],
         cpu: ["arm64"],
+        libc: ["glibc"],
       },
     });
     assert.deepStrictEqual(createStageWorkspaceConfig("mac", "universal"), {
@@ -182,6 +236,46 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("unpacks the fff shared library for filesystem and FFI access", () => {
     assert.deepStrictEqual(DESKTOP_ASAR_UNPACK, ["node_modules/@ff-labs/fff-bin-*/**/*"]);
+  });
+
+  it.effect("preserves both Linux icon resize failures with structural context", () => {
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+
+    return Effect.gen(function* () {
+      const error = yield* stageLinuxIconSize("source.png", "target.png", 512, false).pipe(
+        Effect.provide(iconResizeSpawnerLayer(commands, [1, 2])),
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, LinuxIconResizeError);
+      assert.equal(error.operation, "resize");
+      assert.equal(error.iconSize, 512);
+      assert.equal(error.primaryTool, "magick");
+      assert.equal(error.fallbackTool, "convert");
+      assert.include(error.message, "512x512");
+      assert.include(error.message, "`magick`");
+      assert.include(error.message, "`convert`");
+      assert.notInclude(error.message, "non-zero exit code");
+
+      assert.instanceOf(error.cause, AggregateError);
+      const aggregateCause = error.cause as AggregateError;
+      assert.lengthOf(aggregateCause.errors, 2);
+      assert.strictEqual(aggregateCause.cause, aggregateCause.errors[0]);
+      assert.instanceOf(aggregateCause.errors[0], BuildCommandFailedError);
+      assert.instanceOf(aggregateCause.errors[1], BuildCommandFailedError);
+      const primaryError = aggregateCause.errors[0] as BuildCommandFailedError;
+      const fallbackError = aggregateCause.errors[1] as BuildCommandFailedError;
+      assert.equal(primaryError.command, "magick linux icon 512x512");
+      assert.equal(primaryError.exitCode, 1);
+      assert.include(primaryError.message, "magick linux icon");
+      assert.equal(fallbackError.command, "convert linux icon 512x512");
+      assert.equal(fallbackError.exitCode, 2);
+      assert.include(fallbackError.message, "convert linux icon");
+      assert.deepStrictEqual(
+        commands.map(({ command }) => command),
+        ["magick", "convert"],
+      );
+    });
   });
 
   it("derives macOS passkey signing configuration from the Clerk publishable key", () => {
@@ -280,7 +374,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("preserves known passkey signing configuration errors at the build boundary", () => {
     const decodingCause = new Error("publishable-key-decode-failed");
     const knownError = new InvalidMacPasskeyPublishableKeyError({ cause: decodingCause });
-    const error = BuildScriptError.fromMacPasskeySigningConfiguration(knownError);
+    const error = MacPasskeySigningConfigurationResolutionError.fromCause(knownError);
 
     assert.strictEqual(error, knownError);
     assert.instanceOf(error, InvalidMacPasskeyPublishableKeyError);
@@ -291,9 +385,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("wraps unknown passkey signing configuration defects without copying cause text", () => {
     const secret = "pk_test_do-not-retain";
     const cause = new Error(secret);
-    const error = BuildScriptError.fromMacPasskeySigningConfiguration(cause);
+    const error = MacPasskeySigningConfigurationResolutionError.fromCause(cause);
 
-    assert.instanceOf(error, BuildScriptError);
+    assert.instanceOf(error, MacPasskeySigningConfigurationResolutionError);
     assert.strictEqual(error.cause, cause);
     assert.equal(error.message, "Failed to resolve macOS passkey signing configuration.");
     assert.notInclude(error.message, secret);
@@ -316,6 +410,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect("keeps executable resource editing enabled for unsigned Windows builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const win = config.win as Record<string, unknown>;
+      assert.equal(win.icon, "icon.ico");
+      assert.equal(win.signAndEditExecutable, true);
+      assert.notProperty(win, "azureSignOptions");
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
@@ -326,6 +439,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
     assert.deepStrictEqual(resolveFffNativeDependencies("win", "x64", "0.9.4"), {
       "@ff-labs/fff-bin-win32-x64": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "x64", "0.9.4"), {
+      "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
+      "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
     });
     assert.deepStrictEqual(resolveFffNativeDependencies("linux", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-linux-arm64-gnu": "0.9.4",
@@ -377,6 +494,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it("classifies invalid configured ports with the decoder's number grammar", () => {
+    const cause = new Error("invalid configured port");
+
+    assert.equal(
+      InvalidMockUpdateServerPortError.fromConfigValue("0x10", cause).reason,
+      "not-numeric",
+    );
+    assert.equal(
+      InvalidMockUpdateServerPortError.fromConfigValue("12.5", cause).reason,
+      "not-integer",
+    );
+    assert.equal(
+      InvalidMockUpdateServerPortError.fromConfigValue("65536", cause).reason,
+      "out-of-range",
+    );
+    assert.strictEqual(
+      InvalidMockUpdateServerPortError.fromConfigValue("0x10", cause).cause,
+      cause,
+    );
+  });
+
   it.effect("resolves default platform and architecture from host references", () =>
     Effect.gen(function* () {
       const resolved = yield* resolveBuildOptions({
@@ -391,6 +529,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -428,6 +567,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(

@@ -2,6 +2,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   AuthAccessTokenType,
@@ -652,6 +653,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
+            resize: () => Effect.die("PreviewManager not stubbed in this test"),
             reportStatus: () => Effect.void,
             refresh: () => Effect.void,
             close: () => Effect.void,
@@ -3232,6 +3234,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+    it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          config: { devUrl: new URL(crossOriginClientOrigin) },
+        });
+
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const response = yield* fetchEffect(sessionUrl, {
+          method: "OPTIONS",
+          headers: {
+            origin: desktopOrigin,
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "content-type",
+          },
+        });
+
+        assert.equal(response.status, 204);
+        assertBrowserApiCorsPreflightHeaders(response.headers, {
+          origin: desktopOrigin,
+          credentials: true,
+        });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
   it.effect("includes CORS headers on remote websocket-ticket auth failures", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -3652,18 +3680,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects reusing the same bootstrap credential after it has been exchanged", () =>
+  it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
+      // The desktop-bootstrap grant is delivered over trusted IPC at
+      // backend launch and needs to stay claimable after a renderer
+      // refresh, so it's intentionally reusable (unlike user-facing
+      // one-time pairing credentials).
       yield* buildAppUnderTest();
 
       const first = yield* bootstrapBrowserSession();
       const second = yield* bootstrapBrowserSession();
 
       assert.equal(first.response.status, 200);
-      assert.equal(second.response.status, 401);
-      assert.equal((second.body as { readonly _tag?: string })._tag, "EnvironmentAuthInvalidError");
-      assert.equal((second.body as { readonly code?: string }).code, "auth_invalid");
-      assert.equal((second.body as { readonly reason?: string }).reason, "invalid_credential");
+      assert.equal(second.response.status, 200);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4098,6 +4127,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("shares one preview automation broker across websocket sessions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const firstConnected = yield* Deferred.make<string>();
+        const firstClosed = yield* Deferred.make<void>();
+        const host = {
+          clientId: "shared-preview-host",
+          environmentId: testEnvironmentDescriptor.environmentId,
+        } as const;
+
+        yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(
+            Stream.tap((event) =>
+              event.type === "connected"
+                ? Deferred.succeed(firstConnected, event.connectionId)
+                : Effect.void,
+            ),
+            Stream.runDrain,
+            Effect.ensuring(Deferred.succeed(firstClosed, undefined)),
+          ),
+        ).pipe(Effect.forkScoped);
+
+        const firstConnectionId = yield* Deferred.await(firstConnected);
+        const replacementEvent = yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(Stream.runHead),
+        ).pipe(Effect.map(Option.getOrThrow));
+        const firstStreamClosed = yield* Deferred.await(firstClosed).pipe(
+          Effect.timeoutOption("2 seconds"),
+        );
+
+        assert.equal(replacementEvent.type, "connected");
+        assert.notEqual(replacementEvent.connectionId, firstConnectionId);
+        assert.isTrue(Option.isSome(firstStreamClosed));
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("rejects websocket rpc handshake when session authentication is missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -4430,7 +4499,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
-  it.effect("preserves workspace rpc failure messages", () =>
+  it.effect("preserves structured workspace rpc failures", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -4443,18 +4512,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const outsideFile = path.join(outsideDir, "outside.txt");
       yield* fs.writeFileString(outsideFile, "outside\n");
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
+      const resolvedOutsideFile = yield* fs.realPath(outsideFile);
 
       yield* buildAppUnderTest();
 
       const invalidWorkspace = path.join(workspaceDir, "missing-workspace");
       const missingBrowseParent = path.join(workspaceDir, "missing-browse");
+      const sensitiveQuery = "authorization: Bearer secret-token";
       const wsUrl = yield* getWsServerUrl("/ws");
       const results = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.all({
             search: client[WS_METHODS.projectsSearchEntries]({
               cwd: invalidWorkspace,
-              query: "needle",
+              query: sensitiveQuery,
               limit: 10,
             }).pipe(Effect.result),
             list: client[WS_METHODS.projectsListEntries]({ cwd: invalidWorkspace }).pipe(
@@ -4472,26 +4543,103 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assertTrue(results.search._tag === "Failure");
+      if (
+        results.search._tag !== "Failure" ||
+        results.search.failure._tag !== "ProjectSearchEntriesError"
+      ) {
+        assert.fail("Expected a ProjectSearchEntriesError");
+      }
+      const searchError = results.search.failure;
       assert.equal(
-        results.search.failure.message,
-        `Failed to search workspace entries: Workspace root does not exist: ${invalidWorkspace}`,
+        searchError.message,
+        `Failed to search workspace entries in '${invalidWorkspace}'.`,
       );
-      assertTrue(results.list._tag === "Failure");
+      assert.equal(searchError.cwd, invalidWorkspace);
+      assert.equal(searchError.queryLength, sensitiveQuery.length);
+      assert.notProperty(searchError, "query");
+      assert.notInclude(searchError.message, "Bearer");
+      assert.notInclude(searchError.message, "secret-token");
+      assert.equal(searchError.limit, 10);
+      assert.equal(searchError.failure, "workspace_root_not_found");
+      assert.equal(searchError.normalizedCwd, invalidWorkspace);
+      assert.isDefined(searchError.cause);
+
+      if (
+        results.list._tag !== "Failure" ||
+        results.list.failure._tag !== "ProjectListEntriesError"
+      ) {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      const listError = results.list.failure;
+      assert.equal(listError.message, `Failed to list workspace entries in '${invalidWorkspace}'.`);
+      assert.equal(listError.cwd, invalidWorkspace);
+      assert.equal(listError.failure, "workspace_root_not_found");
+      assert.equal(listError.normalizedCwd, invalidWorkspace);
+      assert.isDefined(listError.cause);
+
+      if (results.read._tag !== "Failure" || results.read.failure._tag !== "ProjectReadFileError") {
+        assert.fail("Expected a ProjectReadFileError");
+      }
+      const readError = results.read.failure;
       assert.equal(
-        results.list.failure.message,
-        `Failed to list workspace entries: Workspace root does not exist: ${invalidWorkspace}`,
+        readError.message,
+        `Failed to read workspace file 'linked-outside.txt' in '${workspaceDir}'.`,
       );
-      assertTrue(results.read._tag === "Failure");
+      assert.equal(readError.cwd, workspaceDir);
+      assert.equal(readError.relativePath, "linked-outside.txt");
+      assert.equal(readError.failure, "resolved_path_outside_root");
+      assert.equal(readError.resolvedPath, resolvedOutsideFile);
+      assert.isDefined(readError.cause);
+
+      if (
+        results.browse._tag !== "Failure" ||
+        results.browse.failure._tag !== "FilesystemBrowseError"
+      ) {
+        assert.fail("Expected a FilesystemBrowseError");
+      }
+      const browseError = results.browse.failure;
       assert.equal(
-        results.read.failure.message,
-        "Failed to read workspace file: Workspace file path resolves outside the project root.",
+        browseError.message,
+        `Failed to browse filesystem path './missing-browse/child' from '${workspaceDir}'.`,
       );
-      assertTrue(results.browse._tag === "Failure");
-      assert.equal(
-        results.browse.failure.message,
-        `Unable to browse '${missingBrowseParent}': ENOENT: no such file or directory, scandir '${missingBrowseParent}'`,
-      );
+      assert.equal(browseError.cwd, workspaceDir);
+      assert.equal(browseError.partialPath, "./missing-browse/child");
+      assert.equal(browseError.failure, "read_directory_failed");
+      assert.equal(browseError.parentPath, missingBrowseParent);
+      assert.isDefined(browseError.cause);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports workspace root stat failures without relabeling them as missing", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const blockedRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-stat-error-",
+      });
+      const workspaceRoot = path.join(blockedRoot, "workspace");
+      yield* fs.makeDirectory(workspaceRoot);
+      yield* fs.chmod(blockedRoot, 0o000);
+
+      const result = yield* Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const wsUrl = yield* getWsServerUrl("/ws");
+        return yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.projectsListEntries]({ cwd: workspaceRoot }).pipe(Effect.result),
+          ),
+        );
+      }).pipe(Effect.ensuring(fs.chmod(blockedRoot, 0o700).pipe(Effect.ignore)));
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectListEntriesError") {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      const error = result.failure;
+      assert.equal(error.failure, "workspace_root_stat_failed");
+      assert.equal(error.normalizedCwd, workspaceRoot);
+      assert.equal(error.detail, "validate-existing");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4572,12 +4720,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ).pipe(Effect.result),
       );
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "ProjectWriteFileError");
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectWriteFileError") {
+        assert.fail("Expected a ProjectWriteFileError");
+      }
+      const writeError = result.failure;
       assert.equal(
-        result.failure.message,
-        "Workspace file path must stay within the project root.",
+        writeError.message,
+        `Failed to write workspace file '../escape.txt' in '${workspaceDir}'.`,
       );
+      assert.equal(writeError.cwd, workspaceDir);
+      assert.equal(writeError.relativePath, "../escape.txt");
+      assert.equal(writeError.failure, "workspace_path_outside_root");
+      assert.isDefined(writeError.cause);
+      assert.notProperty(writeError, "contents");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
