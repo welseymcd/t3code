@@ -39,6 +39,10 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+export const WorkspaceFileOpenMode = Schema.Literals(["external", "internal"]);
+export type WorkspaceFileOpenMode = typeof WorkspaceFileOpenMode.Type;
+export const DEFAULT_WORKSPACE_FILE_OPEN_MODE: WorkspaceFileOpenMode = "external";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),

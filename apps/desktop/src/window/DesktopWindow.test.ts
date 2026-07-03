@@ -91,6 +91,19 @@ function makeFakeBrowserWindow() {
   };
 }
 
+function makeFakeChildWindow() {
+  const window = {
+    focus: vi.fn(),
+    isDestroyed: vi.fn(() => false),
+    isMinimized: vi.fn(() => false),
+    isVisible: vi.fn(() => true),
+    on: vi.fn(),
+    restore: vi.fn(),
+    show: vi.fn(),
+  };
+  return window as unknown as Electron.BrowserWindow;
+}
+
 const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
   iconPaths: Effect.succeed({
     ico: Option.none<string>(),
@@ -159,7 +172,7 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (window) => Effect.sync(() => window.focus()),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),

@@ -32,6 +32,7 @@ import {
 } from "./methods/updates.ts";
 import {
   confirm,
+  focusFileViewerWindow,
   getAppBranding,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,

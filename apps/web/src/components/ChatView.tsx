@@ -3479,9 +3479,16 @@ function ChatViewContent(props: ChatViewProps) {
         useRightPanelStore.getState().open(activeThreadRef, "plan");
       }
     }
+    setFileExplorerOpen(false);
     planSidebarDismissedForTurnRef.current = null;
     // activeThreadRef resets transitively with the active thread.
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (!activeWorkspaceRoot) {
+      setFileExplorerOpen(false);
+    }
+  }, [activeWorkspaceRoot]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -5347,6 +5354,16 @@ function ChatViewContent(props: ChatViewProps) {
           >
             {rightPanelContent}
           </RightPanelTabs>
+        </RightPanelSheet>
+      ) : null}
+      {shouldUsePlanSidebarSheet && fileExplorerOpen ? (
+        <RightPanelSheet open={fileExplorerOpen} onClose={closeFileExplorer}>
+          <FileExplorerSidebar
+            environmentId={activeThread.environmentId}
+            cwd={activeWorkspaceRoot ?? null}
+            mode="sheet"
+            onClose={closeFileExplorer}
+          />
         </RightPanelSheet>
       ) : null}
 
