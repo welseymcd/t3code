@@ -14,9 +14,7 @@ import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 
-export function isVersionRequest(args: ReadonlyArray<string>): boolean {
-  return args.includes("--version") || args.includes("-v");
-}
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -56,11 +54,9 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
 export const cli = makeCli();
 
 if (import.meta.main) {
-  if (isVersionRequest(process.argv.slice(2))) {
-    printVersion();
-  } else {
-    void import("./cli/main.ts").then(({ runCli }) => {
-      runCli(packageJson.version);
-    });
-  }
+  Command.run(cli, { version: packageJson.version }).pipe(
+    Effect.scoped,
+    Effect.provide(CliRuntimeLayer),
+    NodeRuntime.runMain,
+  );
 }

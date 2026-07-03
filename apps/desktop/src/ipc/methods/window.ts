@@ -258,13 +258,3 @@ export const openExternal = DesktopIpc.makeIpcMethod({
     return yield* shell.openExternal(url);
   }),
 });
-
-export const focusFileViewerWindow = makeIpcMethod({
-  channel: IpcChannels.FOCUS_FILE_VIEWER_WINDOW_CHANNEL,
-  payload: Schema.Void,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.focusFileViewerWindow")(function* () {
-    const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    yield* desktopWindow.focusFileViewerWindow;
-  }),
-});

@@ -114,16 +114,13 @@ function RootRouteView() {
     );
   }
 
-  const appShell =
-    pathname === "/file-viewer" ? (
-      <Outlet />
-    ) : (
-      <CommandPalette>
-        <AppSidebarLayout>
-          <Outlet />
-        </AppSidebarLayout>
-      </CommandPalette>
-    );
+  const appShell = (
+    <CommandPalette>
+      <AppSidebarLayout>
+        <Outlet />
+      </AppSidebarLayout>
+    </CommandPalette>
+  );
 
   return (
     <ToastProvider>

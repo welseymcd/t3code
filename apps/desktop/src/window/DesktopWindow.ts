@@ -177,21 +177,6 @@ function syncWindowAppearance(
   });
 }
 
-function isInternalFileViewerUrl(rawUrl: string, allowedOrigins: ReadonlySet<string>): boolean {
-  try {
-    const url = new URL(rawUrl);
-    if (url.protocol === "file:") {
-      return url.hash.startsWith("#/file-viewer");
-    }
-    if (!allowedOrigins.has(url.origin)) {
-      return false;
-    }
-    return url.pathname === "/file-viewer" || url.hash.startsWith("#/file-viewer");
-  } catch {
-    return false;
-  }
-}
-
 type RevealSubscription = (listener: () => void) => void;
 
 function bindFirstRevealTrigger(
@@ -229,7 +214,6 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
-  let fileViewerWindow: Electron.BrowserWindow | null = null;
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -262,19 +246,10 @@ export const make = Effect.gen(function* () {
     DesktopWindowError
   > {
     yield* previewManager.getBrowserSession();
-    const applicationUrl =
-      environment.isDevelopment && Option.isSome(environment.devServerUrl)
-        ? environment.devServerUrl.value.toString()
-        : getDesktopUrl(environment.isDevelopment);
+    const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    const allowedAppOrigins = new Set<string>([backendHttpUrl.origin]);
-    if (Option.isSome(environment.devServerUrl)) {
-      allowedAppOrigins.add(environment.devServerUrl.value.origin);
-    }
-    const titleBarOptions = getWindowTitleBarOptions(shouldUseDarkColors);
-    const backgroundColor = getInitialWindowBackgroundColor(shouldUseDarkColors);
     const window = yield* electronWindow.create({
       width: 1100,
       height: 780,
@@ -364,29 +339,6 @@ export const make = Effect.gen(function* () {
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (isInternalFileViewerUrl(url, allowedAppOrigins)) {
-        return {
-          action: "allow",
-          overrideBrowserWindowOptions: {
-            width: 1280,
-            height: 860,
-            minWidth: 720,
-            minHeight: 480,
-            autoHideMenuBar: true,
-            backgroundColor,
-            ...iconOption,
-            title: environment.displayName,
-            ...titleBarOptions,
-            webPreferences: {
-              preload: environment.preloadPath,
-              contextIsolation: true,
-              nodeIntegration: false,
-              sandbox: true,
-            },
-          },
-        };
-      }
-
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
@@ -658,13 +610,6 @@ export const make = Effect.gen(function* () {
 
       send();
     }),
-    focusFileViewerWindow: Effect.gen(function* () {
-      if (!fileViewerWindow || fileViewerWindow.isDestroyed()) {
-        fileViewerWindow = null;
-        return;
-      }
-      yield* electronWindow.reveal(fileViewerWindow);
-    }).pipe(Effect.withSpan("desktop.window.focusFileViewerWindow")),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       yield* electronWindow.syncAllAppearance((window) =>
