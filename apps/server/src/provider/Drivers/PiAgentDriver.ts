@@ -6,10 +6,11 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ServerProvider,
+  type ServerProviderModel,
   TurnId,
   EventId,
 } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -49,12 +50,29 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMainte
 
 const PROVIDER = ProviderDriverKind.make("piAgent");
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
+const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const PI_THINKING_LEVEL_SET = new Set<string>(PI_THINKING_LEVELS);
+const THINKING_CAPABILITIES = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "thinking",
+      label: "Thinking",
+      type: "select",
+      currentValue: "medium",
+      options: PI_THINKING_LEVELS.map((level) => ({
+        id: level,
+        label: level === "xhigh" ? "Extra high" : level.charAt(0).toUpperCase() + level.slice(1),
+        ...(level === "medium" ? { isDefault: true } : {}),
+      })),
+    },
+  ],
+});
 const DEFAULT_MODELS = [
   {
     slug: "openai-codex/gpt-5.4-mini",
     name: "GPT-5.4 Mini (Codex)",
     isCustom: false,
-    capabilities: EMPTY_CAPABILITIES,
+    capabilities: THINKING_CAPABILITIES,
   },
 ] as const;
 const decodePiAgentSettings = Schema.decodeSync(PiAgentSettings);
@@ -67,6 +85,50 @@ const unknownToString = (value: unknown): string => {
   if (value instanceof Error) return value.message;
   return String(value);
 };
+
+const formatPiProviderName = (provider: string): string =>
+  provider
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+const formatPiModelName = (model: string): string =>
+  model
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^gpt$/i.test(part)) return "GPT";
+      if (/^glm$/i.test(part)) return "GLM";
+      if (/^qwen$/i.test(part)) return "Qwen";
+      if (/^kimi$/i.test(part)) return "Kimi";
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+
+export function parsePiListModelsOutput(output: string): ReadonlyArray<ServerProviderModel> {
+  const models: ServerProviderModel[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("provider")) continue;
+    const [provider, model, , , thinking] = line.split(/\s+/);
+    if (!provider || !model) continue;
+    const slug = `${provider}/${model}`;
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    const subProvider = formatPiProviderName(provider);
+    models.push({
+      slug,
+      name: formatPiModelName(model),
+      shortName: model,
+      subProvider,
+      isCustom: false,
+      capabilities: /^yes$/i.test(thinking ?? "") ? THINKING_CAPABILITIES : EMPTY_CAPABILITIES,
+    });
+  }
+  return models;
+}
 
 type PiResumeCursor = {
   readonly sessionFile?: string;
@@ -91,9 +153,53 @@ const readPiStateResumeCursor = (value: unknown): PiResumeCursor | undefined => 
   return readPiResumeCursor({ sessionFile: state.sessionFile, sessionId: state.sessionId });
 };
 
+const readPiMessageStopReason = (message: unknown): string | undefined => {
+  if (typeof message !== "object" || message === null) return undefined;
+  const stopReason = (message as { readonly stopReason?: unknown }).stopReason;
+  return typeof stopReason === "string" ? stopReason : undefined;
+};
+
 const piSessionDirFromEnv = (env: NodeJS.ProcessEnv): string | undefined => {
   const home = env.T3CODE_HOME?.trim();
   return home ? `${home}/pi-agent-sessions` : undefined;
+};
+
+const readPiToolCallKey = (toolCallId: unknown): string | undefined =>
+  typeof toolCallId === "string" && toolCallId.length > 0 ? toolCallId : undefined;
+
+const readPiTextContent = (value: unknown): string | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const content = (value as { readonly content?: unknown }).content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map((part) =>
+      typeof part === "object" && part !== null ? (part as { text?: unknown }).text : undefined,
+    )
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n");
+  return text.length > 0 ? text : undefined;
+};
+
+const makePiToolData = (input: {
+  readonly toolCallId: unknown;
+  readonly args: unknown;
+  readonly result?: unknown;
+  readonly partialResult?: unknown;
+}) => {
+  const args = typeof input.args === "object" && input.args !== null ? input.args : undefined;
+  const command =
+    args !== undefined && typeof (args as { readonly command?: unknown }).command === "string"
+      ? (args as { readonly command: string }).command
+      : undefined;
+  return {
+    ...(readPiToolCallKey(input.toolCallId)
+      ? { toolCallId: readPiToolCallKey(input.toolCallId) }
+      : {}),
+    ...(command !== undefined ? { command } : {}),
+    ...(args !== undefined ? { args } : {}),
+    ...(input.partialResult !== undefined ? { partialResult: input.partialResult } : {}),
+    ...(input.result !== undefined ? { result: input.result } : {}),
+  };
 };
 
 export type PiAgentDriverEnv = ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto;
@@ -120,6 +226,7 @@ interface PiSessionContext {
   readonly pendingResponses: Map<string, Deferred.Deferred<unknown, ProviderAdapterRequestError>>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   readonly toolItems: Map<string, RuntimeItemId>;
+  readonly toolArgs: Map<string, unknown>;
   activeTurnId: TurnId | undefined;
   latestResumeCursor: PiResumeCursor | undefined;
   closed: boolean;
@@ -132,6 +239,12 @@ function modelsFromSettings(customModels: ReadonlyArray<string> | undefined) {
     customModels ?? [],
     EMPTY_CAPABILITIES,
   );
+}
+
+function resolvePiThinkingLevel(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return PI_THINKING_LEVEL_SET.has(normalized) ? normalized : undefined;
 }
 
 const checkPiProviderStatus = (settings: PiAgentSettings, env: NodeJS.ProcessEnv) =>
@@ -206,17 +319,40 @@ const checkPiProviderStatus = (settings: PiAgentSettings, env: NodeJS.ProcessEnv
     }
 
     const output = `${result.success.value.stdout}\n${result.success.value.stderr}`.trim();
+    const listModelsCommand = yield* resolveSpawnCommand(command, ["--list-models"], { env });
+    const listModelsResult = yield* spawnAndCollect(
+      command,
+      ChildProcess.make(listModelsCommand.command, listModelsCommand.args, {
+        env,
+        shell: listModelsCommand.shell,
+      }),
+    ).pipe(Effect.timeoutOption(8_000), Effect.result);
+    const discoveredModels =
+      listModelsResult._tag === "Success" && listModelsResult.success._tag === "Some"
+        ? parsePiListModelsOutput(
+            `${listModelsResult.success.value.stdout}\n${listModelsResult.success.value.stderr}`,
+          )
+        : [];
+    const availableModels = providerModelsFromSettings(
+      discoveredModels.length > 0 ? discoveredModels : DEFAULT_MODELS,
+      PROVIDER,
+      settings.customModels,
+      EMPTY_CAPABILITIES,
+    );
     return buildServerProvider({
       presentation,
       enabled: true,
       checkedAt,
-      models,
+      models: availableModels,
       probe: {
         installed: true,
         version: parseGenericCliVersion(output),
         status: "ready",
-        auth: { status: "unknown" },
-        message: output || "Pi CLI is available.",
+        auth: { status: "unknown", label: "Managed by Pi" },
+        message:
+          discoveredModels.length > 0
+            ? `Pi CLI is available. ${discoveredModels.length} Pi models discovered. Models and subscriptions are managed by Pi.`
+            : output || "Pi CLI is available. Models and subscriptions are managed by Pi.",
       },
     });
   });
@@ -305,6 +441,35 @@ function makePiAdapter(input: {
         Effect.tap(() => Effect.sync(() => context.pendingResponses.clear())),
       );
 
+    const clearActiveTurn = (
+      context: PiSessionContext,
+      input:
+        | { readonly state: "completed"; readonly raw?: unknown }
+        | { readonly state: "failed"; readonly errorMessage: string; readonly raw?: unknown },
+    ) =>
+      Effect.gen(function* () {
+        const turnId = context.activeTurnId;
+        if (turnId === undefined) return;
+        yield* emitEvent(
+          context,
+          "turn.completed",
+          {
+            state: input.state,
+            stopReason: input.state === "completed" ? "stop" : "error",
+            ...(input.state === "failed" ? { errorMessage: input.errorMessage } : {}),
+          },
+          { turnId, ...(input.raw !== undefined ? { raw: input.raw } : {}) },
+        );
+        context.activeTurnId = undefined;
+        context.session = {
+          ...context.session,
+          status: input.state === "failed" ? "error" : "ready",
+          activeTurnId: undefined,
+          ...(input.state === "failed" ? { lastError: input.errorMessage } : {}),
+          updatedAt: yield* nowIso,
+        };
+      });
+
     const getToolItemId = (context: PiSessionContext, toolCallId: unknown) =>
       Effect.gen(function* () {
         const key =
@@ -339,6 +504,9 @@ function makePiAdapter(input: {
         }
         yield* Deferred.succeed(pending, event.data ?? event);
       });
+
+    const refreshResumeCursorInBackground = (context: PiSessionContext) =>
+      refreshResumeCursor(context).pipe(Effect.ignore, Effect.forkIn(runtimeScope), Effect.asVoid);
 
     const handlePiEvent = (context: PiSessionContext, event: Record<string, unknown>) =>
       Effect.gen(function* () {
@@ -390,6 +558,10 @@ function makePiAdapter(input: {
           case "tool_execution_start": {
             if (currentTurnId === undefined) break;
             const itemId = yield* getToolItemId(context, event.toolCallId);
+            const toolCallKey = readPiToolCallKey(event.toolCallId);
+            if (toolCallKey !== undefined) {
+              context.toolArgs.set(toolCallKey, event.args);
+            }
             yield* emitEvent(
               context,
               "item.started",
@@ -397,7 +569,7 @@ function makePiAdapter(input: {
                 itemType: "dynamic_tool_call",
                 status: "inProgress",
                 title: String(event.toolName ?? "tool"),
-                data: event.args,
+                data: makePiToolData({ toolCallId: event.toolCallId, args: event.args }),
               },
               { turnId: currentTurnId, itemId, raw: event },
             );
@@ -406,15 +578,11 @@ function makePiAdapter(input: {
           case "tool_execution_update": {
             if (currentTurnId === undefined) break;
             const itemId = yield* getToolItemId(context, event.toolCallId);
-            const partialResult = event.partialResult as
-              | { readonly content?: ReadonlyArray<{ readonly text?: unknown }> }
-              | undefined;
-            const content = Array.isArray(partialResult?.content)
-              ? partialResult.content
-                  .map((part) => part.text)
-                  .filter((text): text is string => typeof text === "string")
-                  .join("\n")
-              : undefined;
+            const toolCallKey = readPiToolCallKey(event.toolCallId);
+            const args =
+              event.args ??
+              (toolCallKey !== undefined ? context.toolArgs.get(toolCallKey) : undefined);
+            const content = readPiTextContent(event.partialResult);
             yield* emitEvent(
               context,
               "item.updated",
@@ -423,7 +591,11 @@ function makePiAdapter(input: {
                 status: "inProgress",
                 title: String(event.toolName ?? "tool"),
                 ...(content ? { detail: content } : {}),
-                data: event.partialResult,
+                data: makePiToolData({
+                  toolCallId: event.toolCallId,
+                  args,
+                  partialResult: event.partialResult,
+                }),
               },
               { turnId: currentTurnId, itemId, raw: event },
             );
@@ -432,6 +604,9 @@ function makePiAdapter(input: {
           case "tool_execution_end": {
             if (currentTurnId === undefined) break;
             const itemId = yield* getToolItemId(context, event.toolCallId);
+            const toolCallKey = readPiToolCallKey(event.toolCallId);
+            const args = toolCallKey !== undefined ? context.toolArgs.get(toolCallKey) : undefined;
+            const content = readPiTextContent(event.result);
             yield* emitEvent(
               context,
               "item.completed",
@@ -439,7 +614,8 @@ function makePiAdapter(input: {
                 itemType: "dynamic_tool_call",
                 status: event.isError === true ? "failed" : "completed",
                 title: String(event.toolName ?? "tool"),
-                data: event.result,
+                ...(content ? { detail: content } : {}),
+                data: makePiToolData({ toolCallId: event.toolCallId, args, result: event.result }),
               },
               { turnId: currentTurnId, itemId, raw: event },
             );
@@ -449,6 +625,9 @@ function makePiAdapter(input: {
             if (currentTurnId !== undefined) {
               const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
               context.turns.push({ id: currentTurnId, items: [event.message, ...toolResults] });
+              if (readPiMessageStopReason(event.message) === "toolUse") {
+                break;
+              }
               yield* emitEvent(
                 context,
                 "turn.completed",
@@ -463,16 +642,17 @@ function makePiAdapter(input: {
               activeTurnId: undefined,
               updatedAt: yield* nowIso,
             };
-            yield* refreshResumeCursor(context).pipe(Effect.ignore);
+            yield* refreshResumeCursorInBackground(context);
             break;
           case "agent_end":
+            yield* clearActiveTurn(context, { state: "completed", raw: event });
             context.session = {
               ...context.session,
               status: "ready",
               activeTurnId: undefined,
               updatedAt: yield* nowIso,
             };
-            yield* refreshResumeCursor(context).pipe(Effect.ignore);
+            yield* refreshResumeCursorInBackground(context);
             yield* emitEvent(context, "session.state.changed", { state: "ready" }, { raw: event });
             break;
           case "extension_error":
@@ -536,10 +716,17 @@ function makePiAdapter(input: {
           context.handle.exitCode.pipe(
             Effect.flatMap((code) =>
               Effect.gen(function* () {
+                if (context.activeTurnId !== undefined) {
+                  yield* clearActiveTurn(context, {
+                    state: "failed",
+                    errorMessage: `Pi RPC process exited with code ${String(Number(code))}.`,
+                  });
+                }
                 context.closed = true;
                 context.session = {
                   ...context.session,
                   status: "closed",
+                  activeTurnId: undefined,
                   updatedAt: yield* nowIso,
                 };
                 yield* emitEvent(context, "session.exited", {
@@ -560,6 +747,7 @@ function makePiAdapter(input: {
     const spawnSession = (
       session: ProviderSession,
       model: string | undefined,
+      thinkingLevel: string | undefined,
       cwd: string | undefined,
     ) =>
       Effect.gen(function* () {
@@ -574,6 +762,7 @@ function makePiAdapter(input: {
           );
         }
         if (model !== undefined) args.push("--model", model);
+        if (thinkingLevel !== undefined) args.push("--thinking", thinkingLevel);
         const command = yield* resolveSpawnCommand(input.settings.binaryPath || "pi", args, {
           env: input.env,
         });
@@ -611,6 +800,7 @@ function makePiAdapter(input: {
           pendingResponses: new Map(),
           turns: [],
           toolItems: new Map(),
+          toolArgs: new Map(),
           activeTurnId: undefined,
           latestResumeCursor: readPiResumeCursor(session.resumeCursor),
           closed: false,
@@ -718,6 +908,9 @@ function makePiAdapter(input: {
           const context = yield* spawnSession(
             session,
             startInput.modelSelection?.model,
+            resolvePiThinkingLevel(
+              getModelSelectionStringOptionValue(startInput.modelSelection, "thinking"),
+            ),
             startInput.cwd,
           );
           sessions.set(String(startInput.threadId), context);
@@ -760,7 +953,15 @@ function makePiAdapter(input: {
             message: turnInput.input ?? "",
             ...(wasRunning ? { streamingBehavior: "steer" } : {}),
           };
-          yield* sendCommand(context, command);
+          yield* sendCommand(context, command).pipe(
+            Effect.tapError((error) =>
+              clearActiveTurn(context, {
+                state: "failed",
+                errorMessage: unknownToString(error),
+                raw: error,
+              }),
+            ),
+          );
           const resumeCursor = yield* refreshResumeCursor(context);
           return {
             threadId: turnInput.threadId,

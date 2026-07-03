@@ -1123,6 +1123,33 @@ function summarizeToolTextOutput(value: string): string | null {
   return null;
 }
 
+function summarizeToolTextContentArray(value: unknown): string | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const text = value
+    .map((part) => asTrimmedString(asRecord(part)?.text))
+    .filter((part): part is string => part !== null)
+    .join("\n");
+  return text.length > 0 ? text : null;
+}
+
+function summarizeToolStructuredOutput(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const result = asRecord(data?.result) ?? data;
+  const contentText = summarizeToolTextContentArray(result?.content);
+  if (contentText) {
+    return summarizeToolTextOutput(contentText);
+  }
+  return null;
+}
+
+function extractToolStructuredOutput(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const result = asRecord(data?.result) ?? data;
+  return summarizeToolTextContentArray(result?.content);
+}
+
 function summarizeToolRawOutput(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
   const rawOutput = asRecord(data?.rawOutput);
@@ -1178,7 +1205,13 @@ function extractToolDetail(
     return null;
   }
 
-  const rawOutputSummary = summarizeToolRawOutput(payload);
+  const structuredOutput = extractToolStructuredOutput(payload);
+  if (structuredOutput) {
+    return structuredOutput;
+  }
+
+  const rawOutputSummary =
+    summarizeToolRawOutput(payload) ?? summarizeToolStructuredOutput(payload);
   if (rawOutputSummary) {
     const normalizedRawOutputSummary = normalizePreviewForComparison(rawOutputSummary);
     if (normalizedRawOutputSummary !== normalizedHeading) {

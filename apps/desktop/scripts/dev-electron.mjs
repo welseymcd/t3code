@@ -36,7 +36,9 @@ const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
 const staleSupervisorGracePeriodMs = 2_000;
 const parentExitPollMs = 1_000;
-const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
+const configuredRemoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
+const remoteDebuggingPort =
+  configuredRemoteDebuggingPort === "0" ? undefined : (configuredRemoteDebuggingPort ?? "9223");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
