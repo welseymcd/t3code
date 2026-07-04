@@ -116,6 +116,26 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.truncated).toBe(false);
       }),
     );
+
+    it.effect("refreshes the cached index before listing external file changes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/existing.ts", "export {};\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const beforeChange = yield* workspaceEntries.list({ cwd });
+        expect(beforeChange.entries.some((entry) => entry.path === "src/generated.ts")).toBe(false);
+
+        yield* writeTextFile(cwd, "src/generated.ts", "export const generated = true;\n");
+
+        const afterChange = yield* workspaceEntries.list({ cwd });
+        expect(afterChange.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: "src/generated.ts", kind: "file" }),
+          ]),
+        );
+      }),
+    );
   });
 
   describe("search", () => {
