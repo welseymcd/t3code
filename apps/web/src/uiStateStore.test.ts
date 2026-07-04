@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setFileExplorerExpandedPaths,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -21,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    fileExplorerExpandedPathsByKey: {},
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -140,6 +142,28 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("stores file explorer expansion paths by stable panel key", () => {
+    const initialState = makeUiState();
+    const expanded = setFileExplorerExpandedPaths(initialState, "environment:/repo", [
+      "src/",
+      "src/",
+      "",
+      "apps/web/",
+    ]);
+
+    expect(expanded.fileExplorerExpandedPathsByKey).toEqual({
+      "environment:/repo": ["apps/web/", "src/"],
+    });
+    expect(setFileExplorerExpandedPaths(expanded, "environment:/repo", ["src/", "apps/web/"])).toBe(
+      expanded,
+    );
+
+    const collapsed = setFileExplorerExpandedPaths(expanded, "environment:/repo", []);
+    expect(collapsed.fileExplorerExpandedPathsByKey).toEqual({
+      "environment:/repo": [],
+    });
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -150,6 +174,11 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      fileExplorerExpandedPathsByKey: {
+        "environment:/repo": ["src/", "", "src/", "apps/web/"],
+        "": ["ignored/"],
+        invalid: "not-an-array" as unknown as string[],
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -168,6 +197,9 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      fileExplorerExpandedPathsByKey: {
+        "environment:/repo": ["apps/web/", "src/"],
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -252,6 +284,9 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      fileExplorerExpandedPathsByKey: {
+        "environment:/repo": ["apps/web/", "src/"],
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -274,6 +309,9 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      fileExplorerExpandedPathsByKey: {
+        "environment:/repo": ["apps/web/", "src/"],
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

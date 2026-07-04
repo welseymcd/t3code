@@ -19,6 +19,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  fileExplorerExpandedPathsByKey?: Record<string, string[]>;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -41,11 +42,17 @@ export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
 
-export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+export interface UiFileExplorerState {
+  fileExplorerExpandedPathsByKey: Record<string, string[]>;
+}
+
+export interface UiState
+  extends UiProjectState, UiThreadState, UiEndpointState, UiFileExplorerState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  fileExplorerExpandedPathsByKey: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -79,6 +86,28 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
       (entry): entry is [string, boolean] => entry[0].length > 0 && typeof entry[1] === "boolean",
     ),
   );
+}
+
+function sanitizeStringArrayRecord(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, paths]) => {
+      if (key.length === 0 || !Array.isArray(paths)) {
+        return [];
+      }
+      return [[key, normalizeStableStringArray(paths)]];
+    }),
+  );
+}
+
+function normalizeStableStringArray(value: readonly unknown[]): string[] {
+  return [
+    ...new Set(
+      value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+    ),
+  ].sort();
 }
 
 function sanitizeTimestampRecord(value: unknown): Record<string, string> {
@@ -123,6 +152,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    fileExplorerExpandedPathsByKey: sanitizeStringArrayRecord(
+      parsed.fileExplorerExpandedPathsByKey,
+    ),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
       parsed.threadChangedFilesExpandedById,
@@ -208,6 +240,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        fileExplorerExpandedPathsByKey: state.fileExplorerExpandedPathsByKey,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
@@ -334,6 +367,32 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+export function setFileExplorerExpandedPaths(
+  state: UiState,
+  key: string,
+  expandedPaths: readonly string[],
+): UiState {
+  if (key.length === 0) {
+    return state;
+  }
+  const nextExpandedPaths = normalizeStableStringArray(expandedPaths);
+  const currentExpandedPaths = state.fileExplorerExpandedPathsByKey[key];
+  if (
+    currentExpandedPaths &&
+    currentExpandedPaths.length === nextExpandedPaths.length &&
+    currentExpandedPaths.every((path, index) => path === nextExpandedPaths[index])
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    fileExplorerExpandedPathsByKey: {
+      ...state.fileExplorerExpandedPathsByKey,
+      [key]: nextExpandedPaths,
+    },
+  };
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -416,6 +475,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setFileExplorerExpandedPaths: (key: string, expandedPaths: readonly string[]) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -434,6 +494,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setFileExplorerExpandedPaths: (key, expandedPaths) =>
+    set((state) => setFileExplorerExpandedPaths(state, key, expandedPaths)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

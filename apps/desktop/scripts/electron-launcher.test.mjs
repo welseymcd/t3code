@@ -8,6 +8,7 @@ describe("electron development launcher", () => {
       electronBinaryPath: "/repo/node_modules/electron/Electron",
       mainEntryPath: "/repo/apps/desktop/dist-electron/main.cjs",
       desktopRoot: "/repo/apps/desktop",
+      userDataDir: "/tmp/t3code-dev-profile",
       environment: {
         VITE_DEV_SERVER_URL: "http://127.0.0.1:8526",
         T3CODE_PORT: "16566",
@@ -22,7 +23,7 @@ describe("electron development launcher", () => {
     assert.notInclude(script, "\nexport VITE_DEV_SERVER_URL=");
     assert.include(
       script,
-      "exec '/repo/node_modules/electron/Electron' --t3code-dev-root='/repo/apps/desktop' '/repo/apps/desktop/dist-electron/main.cjs' \"$@\"",
+      "exec '/repo/node_modules/electron/Electron' --user-data-dir='/tmp/t3code-dev-profile' --t3code-dev-root='/repo/apps/desktop' '/repo/apps/desktop/dist-electron/main.cjs' \"$@\"",
     );
   });
 });

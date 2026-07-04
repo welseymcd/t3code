@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { useUiStateStore } from "~/uiStateStore";
 
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
@@ -32,6 +33,10 @@ function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
 }
 
+function defaultExpandedDirectoryPaths(paths: readonly string[]): string[] {
+  return paths.filter((path) => path.endsWith("/") && path.split("/").filter(Boolean).length <= 1);
+}
+
 export default function FileBrowserPanel({
   environmentId,
   cwd,
@@ -41,19 +46,29 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
   const entries = entriesQuery.data?.entries ?? [];
+  const fileExplorerStateKey = `${environmentId}:${cwd}`;
+  const persistedExpandedPaths = useUiStateStore(
+    (state) => state.fileExplorerExpandedPathsByKey[fileExplorerStateKey],
+  );
+  const setFileExplorerExpandedPaths = useUiStateStore(
+    (state) => state.setFileExplorerExpandedPaths,
+  );
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
     [entries],
   );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
   const treePaths = useMemo(() => entries.map(treePath), [entries]);
-  const previousTreePathsRef = useRef<readonly string[]>([]);
+  const previousTreeResetRef = useRef<{ key: string; paths: readonly string[] } | null>(null);
 
   const { model } = useFileTree({
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
-    initialExpansion: 1,
+    initialExpansion: persistedExpandedPaths === undefined ? 1 : "closed",
+    ...(persistedExpandedPaths === undefined
+      ? {}
+      : { initialExpandedPaths: persistedExpandedPaths }),
     icons: T3_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
@@ -67,11 +82,36 @@ export default function FileBrowserPanel({
   });
 
   useEffect(() => {
-    if (previousTreePathsRef.current === treePaths) return;
+    const previousReset = previousTreeResetRef.current;
+    if (previousReset?.key === fileExplorerStateKey && previousReset.paths === treePaths) return;
     entryKindsRef.current = entryKinds;
-    previousTreePathsRef.current = treePaths;
-    model.resetPaths(treePaths);
-  }, [entryKinds, model, treePaths]);
+    previousTreeResetRef.current = { key: fileExplorerStateKey, paths: treePaths };
+    model.resetPaths(treePaths, {
+      initialExpandedPaths: persistedExpandedPaths ?? defaultExpandedDirectoryPaths(treePaths),
+    });
+  }, [entryKinds, fileExplorerStateKey, model, persistedExpandedPaths, treePaths]);
+
+  useEffect(() => {
+    const saveExpandedPaths = () => {
+      if (model.isSearchOpen()) {
+        return;
+      }
+      const expandedPaths = treePaths.filter((path) => {
+        if (!path.endsWith("/")) {
+          return false;
+        }
+        const item = model.getItem(path);
+        if (!item?.isDirectory()) {
+          return false;
+        }
+        return (item as { isExpanded: () => boolean }).isExpanded();
+      });
+      setFileExplorerExpandedPaths(fileExplorerStateKey, expandedPaths);
+    };
+
+    saveExpandedPaths();
+    return model.subscribe(saveExpandedPaths);
+  }, [fileExplorerStateKey, model, setFileExplorerExpandedPaths, treePaths]);
 
   const fileCount = useMemo(
     () => entries.reduce((count, entry) => count + (entry.kind === "file" ? 1 : 0), 0),

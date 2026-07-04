@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
+  ApprovalRequestId,
   PiAgentSettings,
   ProviderInstanceId,
   ThreadId,
@@ -41,7 +42,13 @@ for await (const line of rl) {
   if (line.trim().length === 0) continue;
   const request = JSON.parse(line);
   fs.appendFileSync(logPath, JSON.stringify(request) + "\\n");
-  if (request.type === "set_session_name" || request.type === "switch_session") {
+  if (
+    request.type === "set_session_name" ||
+    request.type === "switch_session" ||
+    request.type === "set_model" ||
+    request.type === "set_thinking_level" ||
+    request.type === "extension_ui_response"
+  ) {
     write({ type: "response", id: request.id, success: true, data: {} });
     continue;
   }
@@ -66,6 +73,41 @@ for await (const line of rl) {
       continue;
     }
     write({ type: "turn_start" });
+    if (request.message === "ask") {
+      write({
+        type: "extension_ui_request",
+        id: "ui-1",
+        method: "confirm",
+        title: "Proceed?",
+        message: "Allow action?",
+      });
+      write({ type: "response", id: request.id, success: true, data: {} });
+      continue;
+    }
+    if (request.message === "snapshot") {
+      write({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "message_snapshot",
+          id: "assistant-1",
+          contentIndex: 0,
+          message: { role: "assistant", content: [{ type: "text", text: "o" }] },
+        },
+      });
+      write({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "message_snapshot",
+          id: "assistant-1",
+          contentIndex: 0,
+          message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
+        },
+      });
+      write({ type: "turn_end", message: { role: "assistant", content: [], stopReason: "stop" } });
+      write({ type: "agent_end" });
+      write({ type: "response", id: request.id, success: true, data: {} });
+      continue;
+    }
     if (process.env.T3_PI_TOOL_LOOP === "1") {
       write({
         type: "tool_execution_start",
@@ -111,6 +153,11 @@ if [ "$1" = "--version" ]; then
 fi
 if [ "$1" = "--list-models" ]; then
   printf "provider model context max-out thinking images\\nmock model 128K 32K yes no\\n"
+  exit 0
+fi
+if [ "$1" = "--print" ] || [ "$1" = "-p" ]; then
+  cat >/dev/null
+  printf '{"title":"Fix Pi agent"}\\n'
   exit 0
 fi
 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockPath)} "$@"
@@ -261,6 +308,153 @@ it.layer(NodeServices.layer)("PiAgentDriver lifecycle", (it) => {
 
         yield* Fiber.interrupt(runtimeEventsFiber);
         yield* instance.adapter.stopSession(threadId);
+      }),
+    ),
+  );
+
+  it.effect("sends model and thinking updates on an existing session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("pi-model-switch");
+        const requestLogPath = NodePath.join(
+          yield* Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-log-"))),
+          "requests.jsonl",
+        );
+        const wrapperPath = yield* Effect.promise(() => makeMockPiWrapper({ requestLogPath }));
+        const instance = yield* makeTestInstance(wrapperPath);
+
+        yield* instance.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("piAgent"), model: "mock/model" },
+        });
+        yield* instance.adapter.sendTurn({
+          threadId,
+          input: "switch",
+          attachments: [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("piAgent"),
+            model: "mock/other",
+            options: [{ id: "thinking", value: "high" }],
+          },
+        });
+
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        const setModel = requests.find((request) => request.type === "set_model");
+        const setThinking = requests.find((request) => request.type === "set_thinking_level");
+        const prompt = requests.find((request) => request.type === "prompt");
+        assert.deepInclude(setModel ?? {}, { provider: "mock", modelId: "other" });
+        assert.deepInclude(setThinking ?? {}, { level: "high" });
+        assert.notProperty(prompt ?? {}, "model");
+        assert.notProperty(prompt ?? {}, "thinking");
+
+        yield* instance.adapter.stopSession(threadId);
+      }),
+    ),
+  );
+
+  it.effect("emits first assistant text from Pi snapshot message updates", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("pi-message-snapshot");
+        const requestLogPath = NodePath.join(
+          yield* Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-log-"))),
+          "requests.jsonl",
+        );
+        const wrapperPath = yield* Effect.promise(() => makeMockPiWrapper({ requestLogPath }));
+        const instance = yield* makeTestInstance(wrapperPath);
+        const runtimeEvents: ProviderRuntimeEvent[] = [];
+        const runtimeEventsFiber = yield* Stream.runForEach(
+          instance.adapter.streamEvents,
+          (event) =>
+            Effect.sync(() => {
+              runtimeEvents.push(event);
+            }),
+        ).pipe(Effect.forkChild);
+
+        yield* instance.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("piAgent"), model: "mock/model" },
+        });
+        yield* instance.adapter.sendTurn({ threadId, input: "snapshot", attachments: [] });
+
+        const contentDeltas = runtimeEvents.filter((event) => event.type === "content.delta");
+        assert.deepStrictEqual(
+          contentDeltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
+          ["o", "k"],
+        );
+
+        yield* Fiber.interrupt(runtimeEventsFiber);
+        yield* instance.adapter.stopSession(threadId);
+      }),
+    ),
+  );
+
+  it.effect("bridges Pi extension UI requests through structured user input", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("pi-extension-ui");
+        const requestLogPath = NodePath.join(
+          yield* Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-log-"))),
+          "requests.jsonl",
+        );
+        const wrapperPath = yield* Effect.promise(() => makeMockPiWrapper({ requestLogPath }));
+        const instance = yield* makeTestInstance(wrapperPath);
+        const runtimeEvents: ProviderRuntimeEvent[] = [];
+        const runtimeEventsFiber = yield* Stream.runForEach(
+          instance.adapter.streamEvents,
+          (event) =>
+            Effect.sync(() => {
+              runtimeEvents.push(event);
+            }),
+        ).pipe(Effect.forkChild);
+
+        yield* instance.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("piAgent"), model: "mock/model" },
+        });
+        yield* instance.adapter.sendTurn({ threadId, input: "ask", attachments: [] });
+        const requested = runtimeEvents.find((event) => event.type === "user-input.requested");
+        assert.equal(requested?.type, "user-input.requested");
+        yield* instance.adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-1"), {
+          confirmed: "Yes",
+        });
+        for (let index = 0; index < 5; index += 1) {
+          yield* Effect.yieldNow;
+        }
+
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        const response = requests.find((request) => request.type === "extension_ui_response");
+        assert.deepInclude(response ?? {}, { id: "ui-1", confirmed: true });
+
+        yield* Fiber.interrupt(runtimeEventsFiber);
+        yield* instance.adapter.stopSession(threadId);
+      }),
+    ),
+  );
+
+  it.effect("generates thread titles through an isolated Pi RPC prompt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requestLogPath = NodePath.join(
+          yield* Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-log-"))),
+          "requests.jsonl",
+        );
+        const wrapperPath = yield* Effect.promise(() => makeMockPiWrapper({ requestLogPath }));
+        const instance = yield* makeTestInstance(wrapperPath);
+
+        const result = yield* instance.textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Fix the Pi agent driver",
+          modelSelection: { instanceId: ProviderInstanceId.make("piAgent"), model: "mock/model" },
+        });
+
+        assert.deepStrictEqual(result, { title: "Fix Pi agent" });
       }),
     ),
   );

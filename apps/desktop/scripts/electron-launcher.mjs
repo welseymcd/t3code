@@ -21,6 +21,7 @@ export const APP_BUNDLE_ID = isDevelopment
   : "com.t3tools.t3code";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
 const LAUNCHER_VERSION = 12;
+const DEVELOPMENT_USER_DATA_DIR_NAME = "t3code-dev";
 const defaultIconPath = NodePath.join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
@@ -100,11 +101,33 @@ function shellSingleQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+export function resolveDevelopmentUserDataDir(homeDirectory = NodeOS.homedir()) {
+  if (hostPlatform === "win32") {
+    return NodePath.join(
+      process.env.APPDATA?.trim() || NodePath.join(homeDirectory, "AppData", "Roaming"),
+      DEVELOPMENT_USER_DATA_DIR_NAME,
+    );
+  }
+  if (hostPlatform === "darwin") {
+    return NodePath.join(
+      homeDirectory,
+      "Library",
+      "Application Support",
+      DEVELOPMENT_USER_DATA_DIR_NAME,
+    );
+  }
+  return NodePath.join(
+    process.env.XDG_CONFIG_HOME?.trim() || NodePath.join(homeDirectory, ".config"),
+    DEVELOPMENT_USER_DATA_DIR_NAME,
+  );
+}
+
 export function makeDevelopmentLauncherScript({
   electronBinaryPath,
   mainEntryPath,
   desktopRoot,
   environment,
+  userDataDir = resolveDevelopmentUserDataDir(),
 }) {
   const envEntries = [
     ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
@@ -115,13 +138,19 @@ export function makeDevelopmentLauncherScript({
     ["T3CODE_OTLP_EXPORT_INTERVAL_MS", environment.T3CODE_OTLP_EXPORT_INTERVAL_MS],
     ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
+  const launchArgs = [
+    `--user-data-dir=${shellSingleQuote(userDataDir)}`,
+    `--t3code-dev-root=${shellSingleQuote(desktopRoot)}`,
+    shellSingleQuote(mainEntryPath),
+    '"$@"',
+  ];
   return [
     "#!/bin/sh",
     ...envEntries.map(
       ([name, value]) =>
         `if [ -z "\${${name}:-}" ]; then export ${name}=${shellSingleQuote(value)}; fi`,
     ),
-    `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopRoot)} ${shellSingleQuote(mainEntryPath)} "$@"`,
+    `exec ${shellSingleQuote(electronBinaryPath)} ${launchArgs.join(" ")}`,
     "",
   ].join("\n");
 }
@@ -134,6 +163,7 @@ function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
       mainEntryPath: NodePath.join(desktopDir, "dist-electron", "main.cjs"),
       desktopRoot: desktopDir,
       environment: process.env,
+      userDataDir: resolveDevelopmentUserDataDir(),
     }),
   );
   NodeFS.chmodSync(targetBinaryPath, 0o755);

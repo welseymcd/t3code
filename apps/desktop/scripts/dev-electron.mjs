@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import {
   desktopDir,
+  resolveDevelopmentUserDataDir,
   resolveDevProtocolClient,
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
@@ -190,9 +191,10 @@ function startApp() {
     return;
   }
 
+  const userDataArg = `--user-data-dir=${resolveDevelopmentUserDataDir()}`;
   const electronArgs = remoteDebuggingPort
-    ? [`--remote-debugging-port=${remoteDebuggingPort}`]
-    : [];
+    ? [userDataArg, `--remote-debugging-port=${remoteDebuggingPort}`]
+    : [userDataArg];
   const launchArgs = devProtocolClient
     ? electronArgs
     : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];
