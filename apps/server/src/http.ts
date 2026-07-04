@@ -40,6 +40,7 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import { HTML_DOCUMENTS_ROUTE_PREFIX } from "./htmlDocuments.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
@@ -78,6 +79,77 @@ export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   redirectUrl.hash = requestUrl.hash;
   return redirectUrl.toString();
 }
+
+type StaticFilePathResolution =
+  | { readonly _tag: "Invalid"; readonly message: string }
+  | { readonly _tag: "Resolved"; readonly filePath: string };
+
+function decodeStaticRequestPath(requestPath: string): string | null {
+  try {
+    let decodedPath = requestPath;
+    for (let index = 0; index < 4; index += 1) {
+      const next = decodeURIComponent(decodedPath);
+      if (next === decodedPath) {
+        break;
+      }
+      decodedPath = next;
+    }
+    return decodedPath;
+  } catch {
+    return null;
+  }
+}
+
+const resolveStaticFilePath = Effect.fn("http.resolveStaticFilePath")(function* (input: {
+  readonly rootDir: string;
+  readonly requestPath: string;
+}): Effect.fn.Return<StaticFilePathResolution, never, Path.Path> {
+  const path = yield* Path.Path;
+  const staticRoot = path.resolve(input.rootDir);
+  const decodedRequestPath = decodeStaticRequestPath(input.requestPath);
+  if (decodedRequestPath === null) {
+    return { _tag: "Invalid", message: "Invalid static file path" };
+  }
+  const validationRequestPath = decodedRequestPath === "/" ? "/index.html" : decodedRequestPath;
+  const rawRequestPath = input.requestPath === "/" ? "/index.html" : input.requestPath;
+  const rawStaticRelativePath = rawRequestPath.replace(/^[/\\]+/, "");
+  const validationStaticRelativePath = validationRequestPath.replace(/^[/\\]+/, "");
+  const hasRawLeadingParentSegment =
+    rawStaticRelativePath.startsWith("..") || validationStaticRelativePath.startsWith("..");
+  const validationStaticRelativePathNormalized = path
+    .normalize(validationStaticRelativePath)
+    .replace(/^[/\\]+/, "");
+  const hasPathTraversalSegment = validationStaticRelativePathNormalized.startsWith("..");
+  const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
+  if (
+    staticRelativePath.length === 0 ||
+    hasRawLeadingParentSegment ||
+    hasPathTraversalSegment ||
+    staticRelativePath.includes("\0") ||
+    validationStaticRelativePathNormalized.includes("\0")
+  ) {
+    return { _tag: "Invalid", message: "Invalid static file path" };
+  }
+
+  const isWithinStaticRoot = (candidate: string) =>
+    candidate === staticRoot ||
+    candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);
+
+  let filePath = path.resolve(staticRoot, staticRelativePath);
+  if (!isWithinStaticRoot(filePath)) {
+    return { _tag: "Invalid", message: "Invalid static file path" };
+  }
+
+  const ext = path.extname(filePath);
+  if (!ext) {
+    filePath = path.resolve(filePath, "index.html");
+    if (!isWithinStaticRoot(filePath)) {
+      return { _tag: "Invalid", message: "Invalid static file path" };
+    }
+  }
+
+  return { _tag: "Resolved", filePath };
+});
 
 const authenticateRawRouteWithScope = (
   scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
@@ -219,6 +291,50 @@ export const assetRouteLayer = HttpRouter.add(
   }),
 );
 
+export const htmlDocumentsRouteLayer = HttpRouter.add(
+  "GET",
+  `${HTML_DOCUMENTS_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const config = yield* ServerConfig.ServerConfig;
+    const documentsRequestPath =
+      url.value.pathname === HTML_DOCUMENTS_ROUTE_PREFIX
+        ? "/"
+        : url.value.pathname.slice(HTML_DOCUMENTS_ROUTE_PREFIX.length);
+    const resolved = yield* resolveStaticFilePath({
+      rootDir: config.htmlDocumentsDir,
+      requestPath: documentsRequestPath,
+    });
+    if (resolved._tag === "Invalid") {
+      return HttpServerResponse.text(resolved.message, { status: 400 });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const fileInfo = yield* fileSystem
+      .stat(resolved.filePath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (!fileInfo || fileInfo.type !== "File") {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    return yield* HttpServerResponse.file(resolved.filePath, {
+      status: 200,
+      headers: {
+        "Cache-Control": "private, max-age=60",
+        "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noindex",
+      },
+    }).pipe(
+      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    );
+  }),
+);
+
 export const staticAndDevRouteLayer = HttpRouter.add(
   "GET",
   "*",
@@ -246,42 +362,20 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     }
 
     const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const staticRoot = path.resolve(staticDir);
-    const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
-    const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
-    const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
-    const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
-    const hasPathTraversalSegment = staticRelativePath.startsWith("..");
-    if (
-      staticRelativePath.length === 0 ||
-      hasRawLeadingParentSegment ||
-      hasPathTraversalSegment ||
-      staticRelativePath.includes("\0")
-    ) {
-      return HttpServerResponse.text("Invalid static file path", { status: 400 });
+    const resolved = yield* resolveStaticFilePath({
+      rootDir: staticDir,
+      requestPath: url.value.pathname,
+    });
+    if (resolved._tag === "Invalid") {
+      return HttpServerResponse.text(resolved.message, { status: 400 });
     }
 
-    const isWithinStaticRoot = (candidate: string) =>
-      candidate === staticRoot ||
-      candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);
-
-    let filePath = path.resolve(staticRoot, staticRelativePath);
-    if (!isWithinStaticRoot(filePath)) {
-      return HttpServerResponse.text("Invalid static file path", { status: 400 });
-    }
-
-    const ext = path.extname(filePath);
-    if (!ext) {
-      filePath = path.resolve(filePath, "index.html");
-      if (!isWithinStaticRoot(filePath)) {
-        return HttpServerResponse.text("Invalid static file path", { status: 400 });
-      }
-    }
-
-    const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
+    const fileInfo = yield* fileSystem
+      .stat(resolved.filePath)
+      .pipe(Effect.orElseSucceed(() => null));
     if (!fileInfo || fileInfo.type !== "File") {
-      const indexPath = path.resolve(staticRoot, "index.html");
+      const path = yield* Path.Path;
+      const indexPath = path.resolve(staticDir, "index.html");
       const indexData = yield* fileSystem
         .readFile(indexPath)
         .pipe(Effect.orElseSucceed(() => null));
@@ -294,8 +388,10 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       });
     }
 
-    const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-    const data = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
+    const contentType = Mime.getType(resolved.filePath) ?? "application/octet-stream";
+    const data = yield* fileSystem
+      .readFile(resolved.filePath)
+      .pipe(Effect.orElseSucceed(() => null));
     if (!data) {
       return HttpServerResponse.text("Internal Server Error", { status: 500 });
     }

@@ -33,6 +33,13 @@ describe("serverRuntimeState", () => {
         host: "127.0.0.1",
         port: 4_971,
         origin: "http://127.0.0.1:4971",
+        htmlDocumentsDir: "/tmp/t3/.docs",
+        htmlDocumentsUrl: "http://127.0.0.1:4971/documents/",
+        htmlDocumentProjectDirTemplate: "/tmp/t3/.docs/projects/{projectId}",
+        htmlDocumentProjectUrlTemplate: "http://127.0.0.1:4971/documents/projects/{projectId}/",
+        htmlDocumentThreadDirTemplate: "/tmp/t3/.docs/projects/{projectId}/threads/{threadId}",
+        htmlDocumentThreadUrlTemplate:
+          "http://127.0.0.1:4971/documents/projects/{projectId}/threads/{threadId}/",
         startedAt: "2026-06-20T00:00:00.000Z",
       };
 
@@ -41,6 +48,58 @@ describe("serverRuntimeState", () => {
 
       assert.deepEqual(Option.getOrThrow(restored), state);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("derives document publishing details from the runtime origin", () =>
+    Effect.gen(function* () {
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: {
+          host: "127.0.0.1",
+          htmlDocumentsDir: "/tmp/t3/.docs",
+        },
+        port: 4_971,
+      });
+
+      assert.equal(state.htmlDocumentsDir, "/tmp/t3/.docs");
+      assert.equal(state.htmlDocumentsUrl, "http://127.0.0.1:4971/documents/");
+      assert.equal(state.htmlDocumentProjectDirTemplate, "/tmp/t3/.docs/projects/{projectId}");
+      assert.equal(
+        state.htmlDocumentProjectUrlTemplate,
+        "http://127.0.0.1:4971/documents/projects/{projectId}/",
+      );
+      assert.equal(
+        state.htmlDocumentThreadDirTemplate,
+        "/tmp/t3/.docs/projects/{projectId}/threads/{threadId}",
+      );
+      assert.equal(
+        state.htmlDocumentThreadUrlTemplate,
+        "http://127.0.0.1:4971/documents/projects/{projectId}/threads/{threadId}/",
+      );
+    }),
+  );
+
+  it.effect("derives Tailscale document URLs when a Tailscale origin is available", () =>
+    Effect.gen(function* () {
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: {
+          host: "127.0.0.1",
+          htmlDocumentsDir: "/tmp/t3/.docs",
+        },
+        port: 4_971,
+        tailscaleOrigin: "https://desktop.tail.ts.net/",
+      });
+
+      assert.equal(state.tailscaleOrigin, "https://desktop.tail.ts.net");
+      assert.equal(state.tailscaleHtmlDocumentsUrl, "https://desktop.tail.ts.net/documents/");
+      assert.equal(
+        state.tailscaleHtmlDocumentProjectUrlTemplate,
+        "https://desktop.tail.ts.net/documents/projects/{projectId}/",
+      );
+      assert.equal(
+        state.tailscaleHtmlDocumentThreadUrlTemplate,
+        "https://desktop.tail.ts.net/documents/projects/{projectId}/threads/{threadId}/",
+      );
+    }),
   );
 
   it.effect("treats a missing runtime state file as absent", () =>

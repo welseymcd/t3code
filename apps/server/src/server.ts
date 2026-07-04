@@ -8,6 +8,7 @@ import * as ServerConfig from "./config.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
+  htmlDocumentsRouteLayer,
   serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
@@ -91,7 +92,11 @@ import {
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import {
+  disableTailscaleServe,
+  ensureTailscaleServe,
+  resolveTailscaleHttpsBaseUrl,
+} from "@t3tools/tailscale";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -354,6 +359,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    htmlDocumentsRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
@@ -405,12 +411,12 @@ export const makeServerLayer = Layer.unwrap(
               }
 
               const localPort = address.port;
-              return yield* ensureTailscaleServe({
+              const served = yield* ensureTailscaleServe({
                 localPort,
                 servePort: config.tailscaleServePort,
                 localHost: "127.0.0.1",
               }).pipe(
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
+                Effect.as(true),
                 Effect.tap(() =>
                   Effect.logInfo("Tailscale Serve configured", {
                     localPort,
@@ -422,9 +428,41 @@ export const makeServerLayer = Layer.unwrap(
                     cause,
                     localPort,
                     servePort: config.tailscaleServePort,
+                  }).pipe(Effect.as(false)),
+                ),
+              );
+              if (!served) {
+                return null;
+              }
+              const tailscaleOrigin = yield* resolveTailscaleHttpsBaseUrl({
+                servePort: config.tailscaleServePort,
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to resolve Tailscale HTTPS URL", {
+                    cause,
+                    servePort: config.tailscaleServePort,
                   }).pipe(Effect.as(null)),
                 ),
               );
+              if (tailscaleOrigin) {
+                const state = yield* makePersistedServerRuntimeState({
+                  config,
+                  port: localPort,
+                  tailscaleOrigin,
+                });
+                yield* persistServerRuntimeState({
+                  path: config.serverRuntimeStatePath,
+                  state,
+                }).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Failed to persist Tailscale runtime state", {
+                      cause,
+                      servePort: config.tailscaleServePort,
+                    }),
+                  ),
+                );
+              }
+              return { localPort, servePort: config.tailscaleServePort };
             }),
             (configured) =>
               configured

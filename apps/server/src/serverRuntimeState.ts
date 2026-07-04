@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import type * as ServerConfig from "./config.ts";
+import { makeHtmlDocumentPublishingInfo } from "./htmlDocuments.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
@@ -14,6 +15,16 @@ export const PersistedServerRuntimeState = Schema.Struct({
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
+  htmlDocumentsDir: Schema.optional(Schema.String),
+  htmlDocumentsUrl: Schema.optional(Schema.String),
+  htmlDocumentProjectDirTemplate: Schema.optional(Schema.String),
+  htmlDocumentProjectUrlTemplate: Schema.optional(Schema.String),
+  htmlDocumentThreadDirTemplate: Schema.optional(Schema.String),
+  htmlDocumentThreadUrlTemplate: Schema.optional(Schema.String),
+  tailscaleOrigin: Schema.optional(Schema.String),
+  tailscaleHtmlDocumentsUrl: Schema.optional(Schema.String),
+  tailscaleHtmlDocumentProjectUrlTemplate: Schema.optional(Schema.String),
+  tailscaleHtmlDocumentThreadUrlTemplate: Schema.optional(Schema.String),
   startedAt: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
@@ -45,17 +56,55 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host">;
+  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host"> &
+    Partial<Pick<ServerConfig.ServerConfig["Service"], "htmlDocumentsDir">>;
   readonly port: number;
+  readonly tailscaleOrigin?: string | null;
 }): Effect.Effect<PersistedServerRuntimeState> =>
-  Effect.map(DateTime.now, (now) => ({
-    version: 1,
-    pid: process.pid,
-    ...(input.config.host ? { host: input.config.host } : {}),
-    port: input.port,
-    origin: runtimeOriginForConfig(input.config, input.port),
-    startedAt: DateTime.formatIso(now),
-  }));
+  Effect.map(DateTime.now, (now) => {
+    const origin = runtimeOriginForConfig(input.config, input.port);
+    const tailscaleOrigin = input.tailscaleOrigin
+      ? new URL("/", input.tailscaleOrigin).origin
+      : undefined;
+    const publishingInfo = input.config.htmlDocumentsDir
+      ? makeHtmlDocumentPublishingInfo({
+          rootDirectory: input.config.htmlDocumentsDir,
+          baseUrl: origin,
+          ...(tailscaleOrigin ? { tailscaleBaseUrl: tailscaleOrigin } : {}),
+        })
+      : undefined;
+    return {
+      version: 1,
+      pid: process.pid,
+      ...(input.config.host ? { host: input.config.host } : {}),
+      port: input.port,
+      origin,
+      ...(publishingInfo
+        ? {
+            htmlDocumentsDir: publishingInfo.rootDirectory,
+            htmlDocumentsUrl: publishingInfo.rootUrl,
+            htmlDocumentProjectDirTemplate: publishingInfo.projectDirectoryTemplate,
+            htmlDocumentProjectUrlTemplate: publishingInfo.projectUrlTemplate,
+            htmlDocumentThreadDirTemplate: publishingInfo.threadDirectoryTemplate,
+            htmlDocumentThreadUrlTemplate: publishingInfo.threadUrlTemplate,
+          }
+        : {}),
+      ...(tailscaleOrigin
+        ? {
+            tailscaleOrigin,
+            ...(publishingInfo?.tailscaleRootUrl
+              ? {
+                  tailscaleHtmlDocumentsUrl: publishingInfo.tailscaleRootUrl,
+                  tailscaleHtmlDocumentProjectUrlTemplate:
+                    publishingInfo.tailscaleProjectUrlTemplate,
+                  tailscaleHtmlDocumentThreadUrlTemplate: publishingInfo.tailscaleThreadUrlTemplate,
+                }
+              : {}),
+          }
+        : {}),
+      startedAt: DateTime.formatIso(now),
+    };
+  });
 
 export const persistServerRuntimeState = (input: {
   readonly path: string;

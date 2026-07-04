@@ -71,6 +71,7 @@ import { vi } from "vite-plus/test";
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import * as ServerConfig from "./config.ts";
+import { resolveHtmlDocumentProjectScope } from "./htmlDocuments.ts";
 import { makeRoutesLayer } from "./server.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -1244,6 +1245,86 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/");
       assert.equal(response.status, 200);
       assert.include(yield* response.text, "router-static-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves generated HTML documents from the documents route", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlDocumentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-router-.docs-",
+      });
+      yield* fileSystem.writeFileString(
+        path.join(htmlDocumentsDir, "guide.html"),
+        "<!doctype html><title>Guide</title><main>html-document-ok</main>",
+      );
+
+      yield* buildAppUnderTest({ config: { htmlDocumentsDir } });
+
+      const response = yield* HttpClient.get("/documents/guide.html");
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["x-content-type-options"], "nosniff");
+      assert.include(yield* response.text, "html-document-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves project-scoped generated HTML documents", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlDocumentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-router-.docs-",
+      });
+      const scope = resolveHtmlDocumentProjectScope({
+        rootDirectory: htmlDocumentsDir,
+        baseUrl: "http://127.0.0.1:3773",
+        projectId: ProjectId.make("project/with spaces"),
+      });
+      yield* fileSystem.makeDirectory(scope.directory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(scope.directory, "guide.html"),
+        "<!doctype html><title>Guide</title><main>project-document-ok</main>",
+      );
+
+      yield* buildAppUnderTest({ config: { htmlDocumentsDir } });
+
+      const response = yield* HttpClient.get(new URL("guide.html", scope.url).pathname);
+      assert.equal(response.status, 200);
+      assert.include(yield* response.text, "project-document-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not fall through to the app shell for missing HTML documents", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-static-" });
+      const htmlDocumentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-router-.docs-",
+      });
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), "app-shell");
+
+      yield* buildAppUnderTest({ config: { staticDir, htmlDocumentsDir } });
+
+      const response = yield* HttpClient.get("/documents/missing.html");
+      assert.equal(response.status, 404);
+      assert.equal(yield* response.text, "Not Found");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("blocks path traversal from the documents route", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const htmlDocumentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-router-.docs-",
+      });
+
+      yield* buildAppUnderTest({ config: { htmlDocumentsDir } });
+
+      const response = yield* HttpClient.get("/documents/%252e%252e/server-runtime.json");
+      assert.equal(response.status, 400);
+      assert.equal(yield* response.text, "Invalid static file path");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
